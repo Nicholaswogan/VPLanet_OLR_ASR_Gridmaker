@@ -1,0 +1,16 @@
+name: climate-grid
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10,<3.12
+  - photochem=0.6.8
+  - mpi4py
+  - h5py
+  - scipy
+  - numpy
+  - numba
+  - astropy
+  - pyyaml
+  - threadpoolctl
+  - dill
+  - tqdm
