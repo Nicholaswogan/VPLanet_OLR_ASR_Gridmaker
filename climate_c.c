@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <float.h>
 
 ClimateModelC *climate_model_create(const char *filename, const char *dataset_name) {
     ClimateModelC *cm = (ClimateModelC *)calloc(1, sizeof(ClimateModelC));
@@ -48,32 +49,64 @@ int climate_model_surface_temperature(const ClimateModelC *cm,
         return -1;
     if (climate_model_toa_fluxes(cm, T_hi, N_H2O, N_CO2, stellar_flux, surface_albedo, &ASR_hi, &OLR_hi) != 0)
         return -1;
-    double f_lo = ASR_lo - OLR_lo;
-    double f_hi = ASR_hi - OLR_hi;
-    if (f_lo * f_hi > 0.0) {
-        return -2; // no sign change
-    }
+    double a = T_lo, fa = ASR_lo - OLR_lo;
+    double b = T_hi, fb = ASR_hi - OLR_hi;
+    if (fa * fb > 0.0) return -2; // no sign change
 
-    double a = T_lo;
-    double b = T_hi;
+    double c = a, fc = fa;
+    double d = b - a, e = d;
     for (int iter = 0; iter < max_iter; ++iter) {
-        double m = 0.5 * (a + b);
-        double ASR_m, OLR_m;
-        if (climate_model_toa_fluxes(cm, m, N_H2O, N_CO2, stellar_flux, surface_albedo, &ASR_m, &OLR_m) != 0)
-            return -1;
-        double f_m = ASR_m - OLR_m;
-        if (fabs(f_m) < tol || 0.5 * fabs(b - a) < tol) {
-            *T_out = m;
+        if (fabs(fc) < fabs(fb)) {
+            a = b; b = c; c = a;
+            fa = fb; fb = fc; fc = fa;
+        }
+        double tol_act = 2.0 * DBL_EPSILON * fabs(b) + 0.5 * tol;
+        double m = 0.5 * (c - b);
+        if (fabs(m) <= tol_act || fb == 0.0) {
+            *T_out = b;
             return 0;
         }
-        if (f_lo * f_m <= 0.0) {
-            b = m;
-            f_hi = f_m;
+        double p, q;
+        if (fabs(e) < tol_act || fabs(fa) <= fabs(fb)) {
+            d = m;
+            e = m;
         } else {
-            a = m;
-            f_lo = f_m;
+            double s = fb / fa;
+            if (a == c) {
+                p = 2.0 * m * s;
+                q = 1.0 - s;
+            } else {
+                double r = fc / fa;
+                double t = fb / fc;
+                p = s * (2.0 * m * q * (q - r) - (b - a) * (r - 1.0));
+                q = (q - 1.0) * (r - 1.0) * (s - 1.0);
+            }
+            if (p > 0.0) q = -q;
+            p = fabs(p);
+            if (2.0 * p < fmin(3.0 * m * q - fabs(tol_act * q), fabs(e * q))) {
+                e = d;
+                d = p / q;
+            } else {
+                d = m;
+                e = m;
+            }
+        }
+        a = b;
+        fa = fb;
+        if (fabs(d) > tol_act)
+            b += d;
+        else
+            b += (m > 0 ? tol_act : -tol_act);
+        if (climate_model_toa_fluxes(cm, b, N_H2O, N_CO2, stellar_flux, surface_albedo, &ASR_hi, &OLR_hi) != 0)
+            return -1;
+        fb = ASR_hi - OLR_hi;
+        if ((fb > 0 && fc > 0) || (fb < 0 && fc < 0)) {
+            c = a;
+            fc = fa;
+            d = b - a;
+            e = d;
         }
     }
-    *T_out = 0.5 * (a + b);
+    *T_out = b;
     return 1; // max iterations reached
 }
