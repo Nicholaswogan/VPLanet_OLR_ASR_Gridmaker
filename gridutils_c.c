@@ -164,12 +164,21 @@ int grid_interpolate(const GridInterpolator *gi, const double *x, double *out) {
     size_t ndim = gi->ndim;
     size_t n_out = gi->n_out;
 
+    // strides[d] = product of shape[d+1..ndim-1] * n_out (C-order flattening)
+    size_t *strides = (size_t *)malloc(ndim * sizeof(size_t));
+    if (!strides) return -1;
+    size_t acc = n_out;
+    for (ssize_t d = (ssize_t)ndim - 1; d >= 0; --d) {
+        strides[d] = acc;
+        acc *= gi->shape[d];
+    }
+
     // Find bounding indices and weights in each dimension
     size_t *idx_lo = (size_t *)malloc(ndim * sizeof(size_t));
     size_t *idx_hi = (size_t *)malloc(ndim * sizeof(size_t));
     double *t = (double *)malloc(ndim * sizeof(double));
     if (!idx_lo || !idx_hi || !t) {
-        free(idx_lo); free(idx_hi); free(t);
+        free(idx_lo); free(idx_hi); free(t); free(strides);
         return -1;
     }
 
@@ -177,6 +186,12 @@ int grid_interpolate(const GridInterpolator *gi, const double *x, double *out) {
         const double *gv = gi->gridvals[d];
         size_t n = gi->shape[d];
         double xv = x[d];
+        if (n < 2) {
+            idx_lo[d] = idx_hi[d] = 0;
+            t[d] = 0.0;
+            continue;
+        }
+
         if (xv <= gv[0]) {
             idx_lo[d] = idx_hi[d] = 0;
             t[d] = 0.0;
@@ -184,6 +199,7 @@ int grid_interpolate(const GridInterpolator *gi, const double *x, double *out) {
             idx_lo[d] = idx_hi[d] = n - 1;
             t[d] = 0.0;
         } else {
+            // Find neighboring indices inside the grid
             size_t i = 0;
             while (i + 1 < n && gv[i + 1] < xv) ++i;
             idx_lo[d] = i;
@@ -200,17 +216,18 @@ int grid_interpolate(const GridInterpolator *gi, const double *x, double *out) {
         double weight = 1.0;
         size_t flat_index = 0;
         for (size_t d = 0; d < ndim; ++d) {
-            size_t idx = (mask & (1u << d)) ? idx_hi[d] : idx_lo[d];
-            weight *= (mask & (1u << d)) ? t[d] : (1.0 - t[d]);
-            flat_index = flat_index * gi->shape[d] + idx;
+            int use_hi = (mask & (1u << d)) != 0;
+            size_t idx = use_hi ? idx_hi[d] : idx_lo[d];
+            weight *= use_hi ? t[d] : (1.0 - t[d]);
+            flat_index += idx * strides[d];
         }
-        flat_index *= n_out;
         const double *base = gi->data + flat_index;
         for (size_t k = 0; k < n_out; ++k) {
             out[k] += weight * base[k];
         }
     }
 
+    free(strides);
     free(idx_lo);
     free(idx_hi);
     free(t);

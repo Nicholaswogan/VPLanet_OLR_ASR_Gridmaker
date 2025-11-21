@@ -25,7 +25,10 @@ int climate_model_toa_fluxes(const ClimateModelC *cm,
                              double stellar_flux, double surface_albedo,
                              double *ASR, double *OLR) {
     if (!cm || !ASR || !OLR) return -1;
-    double x[5] = {T_surf, N_H2O, N_CO2, stellar_flux, surface_albedo};
+    // Grid uses log10 for H2O and CO2 columns per gridnames in ClimateGrid.
+    double logN_H2O = log10(N_H2O);
+    double logN_CO2 = log10(N_CO2);
+    double x[5] = {T_surf, logN_H2O, logN_CO2, stellar_flux, surface_albedo};
     double out[2] = {0.0, 0.0};
     int rc = grid_interpolate(cm->rad_interp, x, out);
     if (rc != 0) return rc;
