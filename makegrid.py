@@ -31,21 +31,20 @@ def model(x):
             RH=1.0, 
             bond_albedo=0.3
         )
-        # print('PASSED',x)
     except ClimaException as e:
-        print('FAILED',x)
+        print('FAILED',list(x))
         raise ClimaException(e)
 
-    res = make_result(c, x, ASR, OLR)
+    res = make_result(c, x, ASR, OLR, 10.0**log10N_H2O, 10.0**log10N_CO2)
 
     return res
 
-def make_result(c, x, ASR, OLR):
+def make_result(c, x, ASR, OLR, N_H2O, N_CO2):
 
     # Ocean chemistry
     indCO2 = c.species_names.index('CO2')
     P_CO2 = (c.P_surf*c.f_i_surf[indCO2])/1e6
-    m_CO2, m_HCO3, m_CO3, m_H = utils.aqueous_carbon_chemistry(c.T_surf, P_CO2, c.m_Ca)
+    m_CO2, m_HCO3, m_CO3, m_H, Omega_cal = utils.aqueous_carbon_chemistry(c.T_surf, P_CO2, c.m_Ca, N_H2O, N_CO2)
     pH = np.log10(m_H) # pH
     DIC = m_CO2 + m_HCO3 + m_CO3 # mol/kg
 
@@ -87,6 +86,7 @@ def make_result(c, x, ASR, OLR):
     result['ocean_m_CO2'] = np.array(m_CO2, np.float32)
     result['ocean_m_HCO3'] = np.array(m_HCO3, np.float32)
     result['ocean_m_CO3'] = np.array(m_CO3, np.float32)
+    result['ocean_Omega_cal'] = np.array(Omega_cal, np.float32)
     # RT
     result['OLR'] = np.array(OLR, np.float32)
     result['ASR'] = np.array(ASR, np.float32)
@@ -94,15 +94,11 @@ def make_result(c, x, ASR, OLR):
     return result
 
 def get_gridvals():
-    T_surf = np.concatenate((
-        np.arange(150.0, 200.0, 25.0),
-        np.arange(200.0, 400.0, 10.0),
-        np.arange(400.0, 550.0, 25.0),
-    ))
-    log10N_H2O = np.arange(3.0, 5.401, 0.4)
-    log10N_CO2 = np.arange(-3.0, 2.81, 0.2)
-    stellar_flux = np.arange(1000.0, 1500.0, 100.0)
-    surface_albedo = np.arange(0.0, 0.5, 0.1)
+    T_surf = np.arange(200.0, 400.0, 10.0)
+    log10N_H2O = np.arange(3.7, 4.501, 0.4)
+    log10N_CO2 = np.arange(-2.0, 2.01, 0.25)
+    stellar_flux = np.arange(1200.0, 1500.01, 100.0)
+    surface_albedo = np.arange(0.0, 0.401, 0.2)
     gridvals = (T_surf, log10N_H2O, log10N_CO2, stellar_flux, surface_albedo)
     gridnames = ['T_surf','log10N_H2O','log10N_CO2','stellar_flux','surface_albedo']
     return gridvals, gridnames
