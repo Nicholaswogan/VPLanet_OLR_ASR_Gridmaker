@@ -16,16 +16,32 @@ typedef struct {
     double *data;       // flattened results array
 } GridInterpolator;
 
-// Load a GridInterpolator from HDF5.
-// dataset_name should match a dataset under group "results".
-// Returns NULL on failure.
+/*
+ * Load a GridInterpolator from an HDF5 file.
+ *
+ * filename      Path to the HDF5 grid file.
+ * dataset_name  Dataset under group "results" to load (e.g., "ASR_OLR").
+ *
+ * Returns: allocated GridInterpolator on success, NULL on failure.
+ */
 GridInterpolator *grid_interpolator_load(const char *filename, const char *dataset_name);
 
-// Free all memory associated with a GridInterpolator.
+/*
+ * Free all memory associated with a GridInterpolator (safe on NULL).
+ *
+ * gi  Pointer returned by grid_interpolator_load.
+ */
 void grid_interpolator_free(GridInterpolator *gi);
 
-// Multilinear interpolation at point x (length ndim).
-// out must have capacity n_out. Returns 0 on success, non-zero on failure.
+/*
+ * Multilinear interpolation at a point.
+ *
+ * gi   Interpolator handle.
+ * x    Input coordinates (length ndim).
+ * out  Output array (length n_out) for the interpolated values.
+ *
+ * Returns 0 on success, non-zero on failure.
+ */
 int grid_interpolate(const GridInterpolator *gi, const double *x, double *out);
 
 #endif // GRIDUTILS_C_H

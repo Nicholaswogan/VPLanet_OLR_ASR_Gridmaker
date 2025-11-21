@@ -26,7 +26,7 @@ Uses the provided `CMakeLists.txt` to build the static library and the test exec
 ```bash
 mkdir -p build
 cd build
-cmake ..
+cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build .
 ./test_climate_c # expects ClimateGrid.h5 in the repo root
 ```
