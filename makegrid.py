@@ -88,8 +88,7 @@ def make_result(c, x, ASR, OLR, N_H2O, N_CO2):
     result['ocean_m_CO3'] = np.array(m_CO3, np.float32)
     result['ocean_Omega_cal'] = np.array(Omega_cal, np.float32)
     # RT
-    result['OLR'] = np.array(OLR, np.float32)
-    result['ASR'] = np.array(ASR, np.float32)
+    result['ASR_OLR'] = np.array([ASR, OLR], np.float32)
 
     return result
 

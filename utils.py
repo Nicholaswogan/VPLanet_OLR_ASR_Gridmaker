@@ -6,7 +6,8 @@ from photochem.clima import AdiabatClimate
 from photochem.utils import stars
 from photochem.utils import species_dict_for_climate, settings_dict_for_climate
 import numba as nb
-from copy import deepcopy
+import gridutils
+from scipy import optimize
 
 @nb.njit()
 def CO2_henrys_constant(T):
@@ -324,3 +325,46 @@ def blackbody_spectrum_at_planet(stellar_flux, Teff, nw):
     F_planet *= factor
 
     return wv_planet, F_planet
+
+class ClimateModel:
+
+    def __init__(self, filename):
+        self.g = gridutils.GridInterpolator(filename)
+        self.rad_interp = self.g.make_interpolator('ASR_OLR')
+
+    def TOA_fluxes(self, T_surf, N_H2O, N_CO2, stellar_flux, surface_albedo):
+        x = np.array([T_surf, np.log10(N_H2O), np.log10(N_CO2), stellar_flux, surface_albedo])
+        ASR, OLR = self.rad_interp(x)
+        return ASR, OLR
+    
+    def surface_temperature(self, N_H2O, N_CO2, stellar_flux, surface_albedo, T_bounds=(200.0, 400.0)):
+        """
+        Solve for surface temperature where TOA absorbed solar equals outgoing longwave.
+
+        Parameters
+        ----------
+        N_H2O : float
+            Total H2O column (mol/cm^2).
+        N_CO2 : float
+            Total CO2 column (mol/cm^2).
+        stellar_flux : float
+            Bolometric stellar flux at the planet (W/m^2).
+        surface_albedo : float
+            Surface albedo.
+        T_bounds : tuple, optional
+            Bracket for the root solver (K), by default (150, 450).
+
+        Returns
+        -------
+        float
+            Surface temperature (K) that balances ASR and OLR.
+        """
+
+        def net_flux(T_surf):
+            ASR, OLR = self.TOA_fluxes(T_surf, N_H2O, N_CO2, stellar_flux, surface_albedo)
+            return ASR - OLR
+
+        sol = optimize.root_scalar(net_flux, bracket=T_bounds, method='brentq')
+        if not sol.converged:
+            raise RuntimeError(f"surface_temperature did not converge for bracket {T_bounds}")
+        return sol.root
