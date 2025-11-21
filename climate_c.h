@@ -23,7 +23,16 @@ int climate_model_toa_fluxes(const ClimateModelC *cm,
 int climate_model_surface_temperature(const ClimateModelC *cm,
                                       double N_H2O, double N_CO2,
                                       double stellar_flux, double surface_albedo,
-                                      double T_lo, double T_hi, double tol,
+                                      double T_lo, double T_hi, double T_guess,
+                                      double tol,
                                       int max_iter, double *T_out);
+
+// Stable equilibrium near a guess: scans for all roots, filters for negative slope, chooses closest to T_guess.
+int climate_model_surface_temperature_stable(const ClimateModelC *cm,
+                                             double N_H2O, double N_CO2,
+                                             double stellar_flux, double surface_albedo,
+                                             double T_lo, double T_hi, double T_guess,
+                                             double scan_step, double slope_delta,
+                                             double tol, int max_iter, double *T_out);
 
 #endif // CLIMATE_C_H

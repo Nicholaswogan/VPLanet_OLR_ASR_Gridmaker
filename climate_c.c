@@ -1,8 +1,8 @@
 #include "climate_c.h"
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <float.h>
 
 ClimateModelC *climate_model_create(const char *filename, const char *dataset_name) {
     ClimateModelC *cm = (ClimateModelC *)calloc(1, sizeof(ClimateModelC));
@@ -41,18 +41,36 @@ int climate_model_toa_fluxes(const ClimateModelC *cm,
 int climate_model_surface_temperature(const ClimateModelC *cm,
                                       double N_H2O, double N_CO2,
                                       double stellar_flux, double surface_albedo,
-                                      double T_lo, double T_hi, double tol,
+                                      double T_lo, double T_hi, double T_guess,
+                                      double tol,
                                       int max_iter, double *T_out) {
     if (!cm || !T_out) return -1;
-    double ASR_lo, OLR_lo, ASR_hi, OLR_hi;
-    if (climate_model_toa_fluxes(cm, T_lo, N_H2O, N_CO2, stellar_flux, surface_albedo, &ASR_lo, &OLR_lo) != 0)
-        return -1;
-    if (climate_model_toa_fluxes(cm, T_hi, N_H2O, N_CO2, stellar_flux, surface_albedo, &ASR_hi, &OLR_hi) != 0)
-        return -1;
-    double a = T_lo, fa = ASR_lo - OLR_lo;
-    double b = T_hi, fb = ASR_hi - OLR_hi;
-    if (fa * fb > 0.0) return -2; // no sign change
+    // Delegate to the stable finder with default scan/slope settings.
+    double scan_step = fmax(0.5, (T_hi - T_lo) / 50.0); // coarse scan
+    double slope_delta = 0.25; // K for derivative estimate
+    return climate_model_surface_temperature_stable(cm, N_H2O, N_CO2,
+                                                    stellar_flux, surface_albedo,
+                                                    T_lo, T_hi, T_guess,
+                                                    scan_step, slope_delta,
+                                                    tol, max_iter, T_out);
+}
 
+// Helper: compute net flux ASR-OLR
+static int net_flux(const ClimateModelC *cm, double T, double N_H2O, double N_CO2,
+                    double stellar_flux, double surface_albedo, double *out) {
+    double ASR, OLR;
+    int rc = climate_model_toa_fluxes(cm, T, N_H2O, N_CO2, stellar_flux, surface_albedo, &ASR, &OLR);
+    if (rc != 0) return rc;
+    *out = ASR - OLR;
+    return 0;
+}
+
+// Brent root on a bracket [a,b]
+static int brent_root(const ClimateModelC *cm, double a, double b,
+                      double fa, double fb,
+                      double N_H2O, double N_CO2,
+                      double stellar_flux, double surface_albedo,
+                      double tol, int max_iter, double *root) {
     double c = a, fc = fa;
     double d = b - a, e = d;
     for (int iter = 0; iter < max_iter; ++iter) {
@@ -63,7 +81,7 @@ int climate_model_surface_temperature(const ClimateModelC *cm,
         double tol_act = 2.0 * DBL_EPSILON * fabs(b) + 0.5 * tol;
         double m = 0.5 * (c - b);
         if (fabs(m) <= tol_act || fb == 0.0) {
-            *T_out = b;
+            *root = b;
             return 0;
         }
         double p, q;
@@ -97,9 +115,8 @@ int climate_model_surface_temperature(const ClimateModelC *cm,
             b += d;
         else
             b += (m > 0 ? tol_act : -tol_act);
-        if (climate_model_toa_fluxes(cm, b, N_H2O, N_CO2, stellar_flux, surface_albedo, &ASR_hi, &OLR_hi) != 0)
+        if (net_flux(cm, b, N_H2O, N_CO2, stellar_flux, surface_albedo, &fb) != 0)
             return -1;
-        fb = ASR_hi - OLR_hi;
         if ((fb > 0 && fc > 0) || (fb < 0 && fc < 0)) {
             c = a;
             fc = fa;
@@ -107,6 +124,113 @@ int climate_model_surface_temperature(const ClimateModelC *cm,
             e = d;
         }
     }
-    *T_out = b;
+    *root = b;
     return 1; // max iterations reached
+}
+
+int climate_model_surface_temperature_stable(const ClimateModelC *cm,
+                                             double N_H2O, double N_CO2,
+                                             double stellar_flux, double surface_albedo,
+                                             double T_lo, double T_hi, double T_guess,
+                                             double scan_step, double slope_delta,
+                                             double tol, int max_iter, double *T_out) {
+    if (!cm || !T_out) return -1;
+    double ASR_lo, OLR_lo, ASR_hi, OLR_hi;
+    if (climate_model_toa_fluxes(cm, T_lo, N_H2O, N_CO2, stellar_flux, surface_albedo, &ASR_lo, &OLR_lo) != 0)
+        return -1;
+    if (climate_model_toa_fluxes(cm, T_hi, N_H2O, N_CO2, stellar_flux, surface_albedo, &ASR_hi, &OLR_hi) != 0)
+        return -1;
+
+    // Scan for sign changes to identify brackets
+    const int max_brackets = 64;
+    double brackets_lo[max_brackets];
+    double brackets_hi[max_brackets];
+    double f_lo_arr[max_brackets];
+    double f_hi_arr[max_brackets];
+    int num_brackets = 0;
+
+    double t_prev = T_lo;
+    double f_prev = ASR_lo - OLR_lo;
+    for (double t = T_lo + scan_step; t <= T_hi + 1e-9; t += scan_step) {
+        double t_curr = (t > T_hi) ? T_hi : t;
+        double f_curr;
+        if (net_flux(cm, t_curr, N_H2O, N_CO2, stellar_flux, surface_albedo, &f_curr) != 0)
+            return -1;
+        if (f_prev == 0.0) {
+            // Exact root at t_prev
+            if (num_brackets < max_brackets) {
+                brackets_lo[num_brackets] = t_prev;
+                brackets_hi[num_brackets] = t_prev;
+                f_lo_arr[num_brackets] = f_prev;
+                f_hi_arr[num_brackets] = f_prev;
+                num_brackets++;
+            }
+        } else if (f_prev * f_curr <= 0.0) {
+            if (num_brackets < max_brackets) {
+                brackets_lo[num_brackets] = t_prev;
+                brackets_hi[num_brackets] = t_curr;
+                f_lo_arr[num_brackets] = f_prev;
+                f_hi_arr[num_brackets] = f_curr;
+                num_brackets++;
+            }
+        }
+        t_prev = t_curr;
+        f_prev = f_curr;
+        if (t_curr >= T_hi) break;
+    }
+
+    if (num_brackets == 0) return -2; // no roots found
+
+    // Solve each bracket, evaluate stability, pick closest stable to T_guess
+    double best_root = 0.0;
+    double best_dist = 1e300;
+    double fallback_root = 0.0;
+    double fallback_dist = 1e300;
+
+    for (int i = 0; i < num_brackets; ++i) {
+        double r = 0.0;
+        double fa = f_lo_arr[i];
+        double fb = f_hi_arr[i];
+        if (brackets_lo[i] == brackets_hi[i]) {
+            r = brackets_lo[i];
+        } else {
+            if (brent_root(cm, brackets_lo[i], brackets_hi[i], fa, fb,
+                           N_H2O, N_CO2, stellar_flux, surface_albedo,
+                           tol, max_iter, &r) != 0) {
+                continue;
+            }
+        }
+
+        // Estimate slope at root
+        double delta = slope_delta;
+        double t_minus = fmax(T_lo, r - delta);
+        double t_plus = fmin(T_hi, r + delta);
+        double f_minus, f_plus;
+        if (net_flux(cm, t_minus, N_H2O, N_CO2, stellar_flux, surface_albedo, &f_minus) != 0) continue;
+        if (net_flux(cm, t_plus, N_H2O, N_CO2, stellar_flux, surface_albedo, &f_plus) != 0) continue;
+        double slope = (f_plus - f_minus) / (t_plus - t_minus);
+
+        double dist = fabs(r - T_guess);
+        if (slope < 0.0) {
+            if (dist < best_dist) {
+                best_dist = dist;
+                best_root = r;
+            }
+        }
+        // Track closest root regardless of stability as fallback
+        if (dist < fallback_dist) {
+            fallback_dist = dist;
+            fallback_root = r;
+        }
+    }
+
+    if (best_dist < 1e299) {
+        *T_out = best_root;
+        return 0;
+    }
+    if (fallback_dist < 1e299) {
+        *T_out = fallback_root;
+        return 1; // returned unstable root
+    }
+    return -3;
 }
