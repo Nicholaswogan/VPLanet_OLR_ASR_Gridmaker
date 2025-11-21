@@ -51,9 +51,29 @@ def Kspcal_eq_constant(T):
 
 @nb.njit()
 def aqueous_carbon_chemistry_saturation(T, P_CO2, m_Ca):
+    """
+    Carbonate chemistry assuming calcite saturation (Omega_cal = 1).
 
-    # P_CO2 in bar
-    # m_Ca in mol/kg
+    Parameters
+    ----------
+    T : float
+        Temperature [K].
+    P_CO2 : float
+        Atmospheric CO2 partial pressure [bar].
+    m_Ca : float
+        Ocean Ca2+ concentration [mol/kg].
+
+    Returns
+    -------
+    m_CO2 : float
+        Dissolved CO2(aq) concentration [mol/kg].
+    m_HCO3 : float
+        Bicarbonate concentration [mol/kg].
+    m_CO3 : float
+        Carbonate concentration [mol/kg] at saturation.
+    m_H : float
+        Proton concentration [mol/kg].
+    """
 
     # Assume there is always some ocean, and that it is 273 K
     T_ocean = np.maximum(T, 273.0)
@@ -149,6 +169,29 @@ def compute_N_CO2(m_CO2, m_HCO3, m_CO3, N_H2O):
 
 @nb.njit()
 def aqueous_carbon_chemistry(T, P_CO2, m_Ca, N_H2O, N_CO2):
+    """
+    Wrapper for carbonate chemistry: try saturation, fall back to mass balance if carbon is insufficient.
+
+    Parameters
+    ----------
+    T : float
+        Temperature [K].
+    P_CO2 : float
+        Atmospheric CO2 partial pressure [bar].
+    m_Ca : float
+        Ocean Ca2+ concentration [mol/kg].
+    N_H2O : float
+        Column of H2O [mol/cm^2].
+    N_CO2 : float
+        Total column of CO2 [mol/cm^2] (atmosphere + ocean).
+
+    Returns
+    -------
+    m_CO2, m_HCO3, m_CO3, m_H : float
+        Species concentrations [mol/kg].
+    Omega_cal : float
+        Calcite saturation state (1.0 if saturation solution is accepted, <1 if mass balance enforced).
+    """
 
     rel_tol = 0
     abs_tol = 1e-30
@@ -291,7 +334,31 @@ class AdiabatClimateVPL(AdiabatClimate):
         self.rad.set_bolometric_flux(stellar_flux)
     
     def TOA_fluxes_column_custom(self, T_surf, N_i, stellar_flux, surface_albedo, RH, bond_albedo=0.3):
-        "Similar to `TOA_fluxes_custom`, but input N_i are total mol/cm^2 in the atmosphere-ocean system."
+        """
+        Compute top-of-atmosphere fluxes using total column inventories (atmosphere + ocean).
+
+        Parameters
+        ----------
+        T_surf : float
+            Surface temperature [K].
+        N_i : ndarray
+            Total column abundances for each species [mol/cm^2], including atmospheric and ocean reservoirs.
+        stellar_flux : float
+            Bolometric stellar flux at the planet [W/m^2].
+        surface_albedo : float
+            Surface albedo [unitless].
+        RH : float
+            Relative humidity [0–1] used to set the atmospheric profile.
+        bond_albedo : float, optional
+            Bond albedo for the tropopause temperature estimate, by default 0.3.
+
+        Returns
+        -------
+        ASR : float
+            Absorbed solar radiation [W/m^2].
+        OLR : float
+            Outgoing longwave radiation [W/m^2].
+        """
 
         # Setup
         self._custom_setup(T_surf, stellar_flux, surface_albedo, RH, bond_albedo)
