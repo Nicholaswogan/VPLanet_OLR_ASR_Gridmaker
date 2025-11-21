@@ -1,0 +1,1 @@
+`conda install -c conda-forge photochem=0.6.8`
