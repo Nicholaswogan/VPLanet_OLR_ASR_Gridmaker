@@ -368,3 +368,25 @@ class ClimateModel:
         if not sol.converged:
             raise RuntimeError(f"surface_temperature did not converge for bracket {T_bounds}")
         return sol.root
+
+
+def main():
+    c = ClimateModel('ClimateGrid.h5')
+    N_H2O = 10.0**4.1
+    N_CO2 = 1
+    stellar_flux = 1300
+    surface_albedo = 0.2
+
+    T_surf = c.surface_temperature(
+        N_H2O=N_H2O,
+        N_CO2=N_CO2,
+        stellar_flux=stellar_flux,
+        surface_albedo=surface_albedo
+    )
+    print(T_surf)
+    ASR, OLR = c.TOA_fluxes(T_surf=300, N_H2O=10**4.1, N_CO2=1, stellar_flux=1300, surface_albedo=0.2)
+    print(ASR, OLR)
+
+
+if __name__ == '__main__':
+    main()
