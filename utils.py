@@ -49,7 +49,7 @@ def Kspcal_eq_constant(T):
     return dSolProd # mol/kg/atm
 
 @nb.njit()
-def aqueous_carbon_chemistry(T, P_CO2, m_Ca):
+def aqueous_carbon_chemistry_saturation(T, P_CO2, m_Ca):
 
     # P_CO2 in bar
     # m_Ca in mol/kg
@@ -72,6 +72,98 @@ def aqueous_carbon_chemistry(T, P_CO2, m_Ca):
 
     return m_CO2, m_HCO3, m_CO3, m_H
 
+@nb.njit()
+def aqueous_carbon_chemistry_mass_balance(T, P_CO2, m_Ca, N_H2O, N_CO2):
+    """
+    Solve the carbonate system by conserving total carbon instead of enforcing calcite saturation.
+
+    Parameters
+    ----------
+    T : float
+        Temperature (K).
+    P_CO2 : float
+        Atmospheric CO2 partial pressure (bar).
+    m_Ca : float
+        Ocean Ca2+ concentration (mol/kg), only used to report Omega_cal.
+    N_H2O : float
+        Column of H2O (mol/cm^2).
+    N_CO2 : float
+        Total column of CO2 (mol/cm^2) in the atmosphere + ocean.
+    """
+
+    # Guard against degenerate cases
+    if N_H2O <= 0.0 or N_CO2 <= 0.0:
+        return 0.0, 0.0, 0.0, 0.0, 0.0
+
+    T_ocean = np.maximum(T, 273.0)
+
+    # Henry's law for the dissolved CO2(aq)
+    m_CO2 = P_CO2*CO2_henrys_constant(T_ocean)
+
+    # Convert global column inventories into mol/kg of ocean
+    mu_H2O = 1.00797*2 + 15.9994 # g/mol
+    C_total = N_CO2*1e3/(N_H2O*mu_H2O) # mol/kg
+
+    # If there is less carbon than CO2(aq) implied by Henry's law, park everything as CO2(aq)
+    if C_total <= m_CO2:
+        return C_total, 0.0, 0.0, 0.0, 0.0
+
+    K2 = K2_eq_constant(T_ocean)
+    K3 = K3_eq_constant(T_ocean)
+
+    # Solve for m_CO3 that satisfies carbon mass balance:
+    # m_CO2 + sqrt((K2*m_CO2*m_CO3)/K3) + m_CO3 = C_total
+    x_lo = 0.0
+    x_hi = C_total
+    m_CO3 = 0.0
+    for _ in range(100):
+        m_CO3 = 0.5*(x_lo + x_hi)
+        m_HCO3 = np.sqrt((K2*m_CO2*m_CO3)/K3)
+        f_val = m_CO2 + m_HCO3 + m_CO3 - C_total
+        if np.abs(f_val) < 1e-14:
+            break
+        if f_val > 0.0:
+            x_hi = m_CO3
+        else:
+            x_lo = m_CO3
+
+    m_HCO3 = np.sqrt((K2*m_CO2*m_CO3)/K3)
+    m_H = 0.0
+    if m_CO3 > 0.0:
+        m_H = (K3*m_HCO3)/m_CO3
+
+    # Report the resulting saturation state (<=1 when carbon is scarce)
+    Kspcal = Kspcal_eq_constant(T_ocean)
+    Omega_cal = 0.0
+    if Kspcal > 0.0:
+        Omega_cal = (m_CO3*m_Ca)/Kspcal
+
+    return m_CO2, m_HCO3, m_CO3, m_H, Omega_cal
+
+@nb.njit()
+def compute_N_CO2(m_CO2, m_HCO3, m_CO3, N_H2O):
+    mu_H2O = 1.00797*2 + 15.9994 # g/mol
+    N_CO2 = (m_CO2 + m_HCO3 + m_CO3)*N_H2O*(mu_H2O/1e3)
+    return N_CO2
+
+@nb.njit()
+def aqueous_carbon_chemistry(T, P_CO2, m_Ca, N_H2O, N_CO2):
+
+    rel_tol = 0
+    abs_tol = 1e-30
+    # Require a small cushion above the inventory before declaring saturation feasible
+    N_CO2_thresh = N_CO2 #+ max(rel_tol * N_CO2, abs_tol)
+
+    m_CO2, m_HCO3, m_CO3, m_H = aqueous_carbon_chemistry_saturation(T, P_CO2, m_Ca)
+
+    # Check to see if solution can satisfy mass balance
+    N_CO2_1 = compute_N_CO2(m_CO2, m_HCO3, m_CO3, N_H2O)
+    if N_CO2_1 < N_CO2_thresh:
+        return m_CO2, m_HCO3, m_CO3, m_H, 1.0
+    
+    # If we are here, then mass balance could not be satisfied
+    return aqueous_carbon_chemistry_mass_balance(T, P_CO2, m_Ca, N_H2O, N_CO2)
+
 @nb.cfunc(nb.void(nb.double,nb.int32,nb.types.CPointer(nb.double),nb.types.CPointer(nb.double), nb.types.CPointer(nb.double)))
 def water_ocean_solubility_fcn(T_surf, ng, P_i, m_i, p):
     # P_i in bar
@@ -79,6 +171,8 @@ def water_ocean_solubility_fcn(T_surf, ng, P_i, m_i, p):
 
     ind_CO2 = int(p[0])
     m_Ca = p[1]
+    N_H2O = p[2]
+    N_CO2 = p[3]
     
     # zero-out everything
     for i in range(ng):
@@ -86,7 +180,7 @@ def water_ocean_solubility_fcn(T_surf, ng, P_i, m_i, p):
 
     # CO2
     P_CO2 = P_i[ind_CO2]
-    m_CO2, m_HCO3, m_CO3, m_H = aqueous_carbon_chemistry(T_surf, P_CO2, m_Ca)
+    m_CO2, m_HCO3, m_CO3, m_H, Omega_cal = aqueous_carbon_chemistry(T_surf, P_CO2, m_Ca, N_H2O, N_CO2)
     m_i[ind_CO2] = m_CO2 + m_HCO3 + m_CO3 # total dissolved carbon
 
 class AdiabatClimateVPL(AdiabatClimate):
@@ -174,18 +268,12 @@ class AdiabatClimateVPL(AdiabatClimate):
         # Change default parameters
         self.max_rc_iters = 30 # Lots of iterations
         self.P_top = 10.0 # 10 dynes/cm^2 top, or 1e-5 bars.
+        self.tol_make_column = 1e-5 # Loosen tolerance to avoid errors
 
         # Deal with ocean solubility
-        self.set_ocean_args(m_Ca=m_Ca)
+        self.m_Ca = m_Ca
         if ocean_chemistry:
             self.set_ocean_solubility_fcn('H2O', water_ocean_solubility_fcn)
-
-    def set_ocean_args(self, m_Ca):
-        "set the ocean Ca2+ concentration (mol/kg)"
-        self.m_Ca = m_Ca
-        indCO2 = self.species_names.index('CO2') + 1e-8
-        self.ocean_args = np.array([indCO2, m_Ca])
-        self.ocean_args_p = self.ocean_args.ctypes.data
 
     def _custom_setup(self, T_surf, stellar_flux, surface_albedo, RH, bond_albedo):
         # Set surface albedo
@@ -200,44 +288,6 @@ class AdiabatClimateVPL(AdiabatClimate):
 
         # Set the bolometric stellar flux
         self.rad.set_bolometric_flux(stellar_flux)
-
-    def TOA_fluxes_custom(self, T_surf, P_i, stellar_flux, surface_albedo, RH, bond_albedo=0.3):
-        """Custom TOA fluxes function
-
-        Parameters
-        ----------
-        T_surf : float
-            Surface temperature (K)
-        P_i : ndarray
-            Partial pressures of gases at surface in dynes/cm^2
-        stellar_flux : float
-            The bolometric stellar flux at planet in W/m^2
-        surface_albedo : float
-            The surface albedo
-        RH : float
-            Relative humidity
-        bond_albedo : float, optional
-            The bond albedo for computing the tropopause temperature, by default 0.3
-
-        Returns
-        -------
-        ASR : float
-            The absorbed solar radiation (W/m^2).
-        OLR : float
-            The outgoing longwave radiation (W/m^2).
-        """        
-
-        # Setup
-        self._custom_setup(T_surf, stellar_flux, surface_albedo, RH, bond_albedo)
-
-        # Compute radiative transfer
-        ASR, OLR = self.TOA_fluxes(T_surf, P_i)
-
-        # Convert to W/m^2
-        OLR /= 1e3
-        ASR /= 1e3
-
-        return ASR, OLR
     
     def TOA_fluxes_column_custom(self, T_surf, N_i, stellar_flux, surface_albedo, RH, bond_albedo=0.3):
         "Similar to `TOA_fluxes_custom`, but input N_i are total mol/cm^2 in the atmosphere-ocean system."
@@ -245,18 +295,14 @@ class AdiabatClimateVPL(AdiabatClimate):
         # Setup
         self._custom_setup(T_surf, stellar_flux, surface_albedo, RH, bond_albedo)
 
-        # We need to adjust N_CO2 such that there is a physical solution
-        indH2O = self.species_names.index('H2O')
+        # Pass in some important inputs
         indCO2 = self.species_names.index('CO2')
-        m_CO2, m_HCO3, m_CO3, m_H = aqueous_carbon_chemistry(T=T_surf, P_CO2=1e-8, m_Ca=self.m_Ca)
-        mu_H2O = 1.00797*2 + 15.9994 # g/mol
-        N_CO2 = (m_CO2 + m_HCO3 + m_CO3)*N_i[indH2O]*(mu_H2O/1e3) # [mol CO2/kg H2O] * [mol H2O/cm^2] * [kg H2O/mol H2O] = [mol CO2/cm^2]
-        N_CO2 = np.maximum(N_CO2, N_i[indCO2])
-        N_i_copy = deepcopy(N_i)
-        N_i_copy[indCO2] = N_CO2
+        indH2O = self.species_names.index('H2O')
+        self.ocean_args = np.array([indCO2+ 1e-8, self.m_Ca, N_i[indH2O], N_i[indCO2]])
+        self.ocean_args_p = self.ocean_args.ctypes.data
 
         # Compute radiative transfer
-        ASR, OLR = self.TOA_fluxes_column(T_surf, N_i_copy)
+        ASR, OLR = self.TOA_fluxes_column(T_surf, N_i)
 
         # Convert to W/m^2
         OLR /= 1e3
