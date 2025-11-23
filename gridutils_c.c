@@ -106,8 +106,37 @@ GridInterpolator *grid_interpolator_load(const char *filename, const char *datas
     }
     hsize_t dims[16];
     H5Sget_simple_extent_dims(space, dims, NULL);
-    size_t ndim = (rank > 1) ? (size_t)(rank - 1) : 1;
-    size_t n_out = (rank > 1) ? (size_t)dims[rank - 1] : 1;
+
+    // Read gridvals to know the grid dimensionality
+    hid_t g_grid = H5Gopen(file_id, "gridvals", H5P_DEFAULT);
+    if (g_grid < 0) {
+        H5Sclose(space);
+        H5Dclose(dset);
+        H5Fclose(file_id);
+        return NULL;
+    }
+    H5G_info_t ginfo;
+    if (H5Gget_info(g_grid, &ginfo) < 0) {
+        H5Gclose(g_grid);
+        H5Sclose(space);
+        H5Dclose(dset);
+        H5Fclose(file_id);
+        return NULL;
+    }
+    size_t grid_ndim = (size_t)ginfo.nlinks;
+    H5Gclose(g_grid);
+
+    size_t ndim;
+    size_t n_out;
+    if ((size_t)rank == grid_ndim) {
+        // Dataset matches grid shape -> scalar output
+        ndim = (size_t)rank;
+        n_out = 1;
+    } else {
+        // Assume last axis is output
+        ndim = (size_t)(rank - 1);
+        n_out = (size_t)dims[rank - 1];
+    }
 
     double **gridvals = NULL;
     size_t *shape = NULL;

@@ -22,6 +22,9 @@ target_link_libraries(climatec PUBLIC ${HDF5_C_LIBRARIES} m)
 add_executable(test_climate_c test_climate_c.c)
 target_link_libraries(test_climate_c PRIVATE climatec)
 
+add_executable(test_carbonate_silicate_c test_carbonate_silicate_c.c)
+target_link_libraries(test_carbonate_silicate_c PRIVATE climatec)
+
 # Convenience install targets (optional)
 install(TARGETS climatec test_climate_c
         ARCHIVE DESTINATION lib
