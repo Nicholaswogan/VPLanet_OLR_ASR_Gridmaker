@@ -13,8 +13,10 @@ static double stellar_flux_at_time(double t_Gyr) {
 }
 
 static double volcanic_degassing(double t_Gyr) {
-    // Constant degassing flux (toy): mol/cm^2/Gyr
-    return 1e3;
+    // Degassing scaled higher in the past; simple linear ramp: 5x at -4 Gyr to 1x today
+    double scale = 1.0 + 4.0 * (-t_Gyr / 4.0); // t_Gyr in [-4,0]: scale 5→1
+    if (scale < 0.0) scale = 0.0;
+    return 1e3 * scale;
 }
 
 static double silicate_weathering(double P_CO2_bar, double T_surf_K) {
@@ -95,17 +97,13 @@ int main(void) {
 
         double dNdt = F_degas - F_weather;
         double dN = dNdt * dt;
-        // Cap fractional change to avoid large oscillations
-        double max_dN = max_frac_change * N_CO2;
-        if (dN > max_dN) dN = max_dN;
-        if (dN < -max_dN) dN = -max_dN;
 
         N_CO2 += dN;
         if (N_CO2 < 1e-12) N_CO2 = 1e-12;
 
         if (i % 50 == 0 || i == steps) {
-            printf("t=%.2f Gyr, N_CO2=%.3e mol/cm^2, P_CO2=%.3e bar (interp), T=%.2f K, F_degas=%.2e, F_weather=%.2e\n",
-                   t, N_CO2, P_CO2_bar, T_surf, F_degas, F_weather);
+            printf("t=%.2f Gyr, S=%.1f W/m^2, N_CO2=%.3e mol/cm^2, P_CO2=%.3e bar (interp), T=%.2f K, F_degas=%.2e, F_weather=%.2e\n",
+                   t, stellar_flux, N_CO2, P_CO2_bar, T_surf, F_degas, F_weather);
         }
 
         t += dt;

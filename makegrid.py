@@ -96,7 +96,7 @@ def get_gridvals():
     T_surf = np.arange(200.0, 400.0, 10.0)
     log10N_H2O = np.arange(3.7, 4.501, 0.4)
     log10N_CO2 = np.arange(-2.0, 2.01, 0.25)
-    stellar_flux = np.arange(1200.0, 1500.01, 100.0)
+    stellar_flux = np.arange(800.0, 1500.01, 100.0)
     surface_albedo = np.arange(0.0, 0.401, 0.2)
     gridvals = (T_surf, log10N_H2O, log10N_CO2, stellar_flux, surface_albedo)
     gridnames = ['T_surf','log10N_H2O','log10N_CO2','stellar_flux','surface_albedo']
