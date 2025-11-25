@@ -5,232 +5,28 @@ from astropy import constants
 from photochem.clima import AdiabatClimate
 from photochem.utils import stars
 from photochem.utils import species_dict_for_climate, settings_dict_for_climate
-import numba as nb
 import gridutils
 from scipy import optimize
 
-@nb.njit()
-def CO2_henrys_constant(T):
-    # from NIST
-    alpha = 0.035*np.exp(2400.0*((1/T) - 1/(298.15)))
-    return alpha
+def skin_temperature(stellar_flux, bond_albedo):
+    return stars.equilibrium_temperature(stellar_flux, bond_albedo)*(1/2)**(1/4)
 
-@nb.njit()
-def K2_eq_constant(T):
-    # CO2(aq) + H2O <=> H+ + HCO3-
-    # p. 123 in Pilson: An Introduction to the Chemistry of the Sea 
-    pK2 = 17.788 - .073104 *T - .0051087*35 + 1.1463*10**-4*T**2
-    K2 = 10.0**(-pK2)
-    return K2
+def blackbody_spectrum_at_planet(stellar_flux, Teff, nw):
 
-@nb.njit()
-def K3_eq_constant(T):
-    # HCO3- <=> H+ + CO32-
-    # p. 123 in Pilson: An Introduction to the Chemistry of the Sea 
-    pK3 = 20.919 - .064209 *T - .011887*35 + 8.7313*10**-5*T**2
-    K3 = 10.0**(-pK3)
-    return K3
+    # Blackbody
+    wv_planet = np.logspace(np.log10(0.1), np.log10(100), nw)*1e3 # nm
+    F_planet = stars.blackbody(Teff, wv_planet)*np.pi
 
-@nb.njit()
-def Kspcal_eq_constant(T):
-    B0 = -0.77712;
-    B1 = 0.0028426;
-    B2 = 178.34;
-    C0 = -0.07711;
-    D0 = 0.0041249;
+    # Rescale so that it has the proper stellar flux for the planet
+    factor = stellar_flux/stars.energy_in_spectrum(wv_planet, F_planet)
+    F_planet *= factor
 
-    T_ocean = T
-    SALINITY = 35.0
-
-    logK0 = -171.9065 - (0.077993 * T_ocean) + (2839.319/T_ocean) + (71.595 * np.log10(T_ocean))
-    logK = logK0 + (B0 + (B1*T_ocean) + B2/(T_ocean)) * np.sqrt(SALINITY) + C0 * SALINITY + D0 * pow(SALINITY,1.5)
-
-    dSolProd = 10.0**logK
-
-    return dSolProd # mol/kg/atm
-
-@nb.njit()
-def aqueous_carbon_chemistry_saturation(T, P_CO2, m_Ca):
-    """
-    Carbonate chemistry assuming calcite saturation (Omega_cal = 1).
-
-    Parameters
-    ----------
-    T : float
-        Temperature [K].
-    P_CO2 : float
-        Atmospheric CO2 partial pressure [bar].
-    m_Ca : float
-        Ocean Ca2+ concentration [mol/kg].
-
-    Returns
-    -------
-    m_CO2 : float
-        Dissolved CO2(aq) concentration [mol/kg].
-    m_HCO3 : float
-        Bicarbonate concentration [mol/kg].
-    m_CO3 : float
-        Carbonate concentration [mol/kg] at saturation.
-    m_H : float
-        Proton concentration [mol/kg].
-    """
-
-    # Assume there is always some ocean, and that it is 273 K
-    T_ocean = np.maximum(T, 273.0)
-
-    # Compute CO_3^{2-} via Eq. 1 in Schwieterman+2019
-    Kspcal = Kspcal_eq_constant(T_ocean)
-    Omega_cal = 1.0
-    m_CO3 = (Omega_cal*Kspcal)/m_Ca
-
-    # Simple Henry's law
-    m_CO2 = P_CO2*CO2_henrys_constant(T_ocean)
-
-    K2 = K2_eq_constant(T_ocean)
-    K3 = K3_eq_constant(T_ocean)
-    m_HCO3 = np.sqrt((K2*m_CO2*m_CO3)/K3)
-    m_H = (K3*m_HCO3)/m_CO3
-
-    return m_CO2, m_HCO3, m_CO3, m_H
-
-@nb.njit()
-def aqueous_carbon_chemistry_mass_balance(T, P_CO2, m_Ca, N_H2O, N_CO2):
-    """
-    Solve the carbonate system by conserving total carbon instead of enforcing calcite saturation.
-
-    Parameters
-    ----------
-    T : float
-        Temperature (K).
-    P_CO2 : float
-        Atmospheric CO2 partial pressure (bar).
-    m_Ca : float
-        Ocean Ca2+ concentration (mol/kg), only used to report Omega_cal.
-    N_H2O : float
-        Column of H2O (mol/cm^2).
-    N_CO2 : float
-        Total column of CO2 (mol/cm^2) in the atmosphere + ocean.
-    """
-
-    # Guard against degenerate cases
-    if N_H2O <= 0.0 or N_CO2 <= 0.0:
-        return 0.0, 0.0, 0.0, 0.0, 0.0
-
-    T_ocean = np.maximum(T, 273.0)
-
-    # Henry's law for the dissolved CO2(aq)
-    m_CO2 = P_CO2*CO2_henrys_constant(T_ocean)
-
-    # Convert global column inventories into mol/kg of ocean
-    mu_H2O = 1.00797*2 + 15.9994 # g/mol
-    C_total = N_CO2*1e3/(N_H2O*mu_H2O) # mol/kg
-
-    # If there is less carbon than CO2(aq) implied by Henry's law, park everything as CO2(aq)
-    if C_total <= m_CO2:
-        return C_total, 0.0, 0.0, 0.0, 0.0
-
-    K2 = K2_eq_constant(T_ocean)
-    K3 = K3_eq_constant(T_ocean)
-
-    # Solve for m_CO3 that satisfies carbon mass balance:
-    # m_CO2 + sqrt((K2*m_CO2*m_CO3)/K3) + m_CO3 = C_total
-    x_lo = 0.0
-    x_hi = C_total
-    m_CO3 = 0.0
-    for _ in range(100):
-        m_CO3 = 0.5*(x_lo + x_hi)
-        m_HCO3 = np.sqrt((K2*m_CO2*m_CO3)/K3)
-        f_val = m_CO2 + m_HCO3 + m_CO3 - C_total
-        if np.abs(f_val) < 1e-14:
-            break
-        if f_val > 0.0:
-            x_hi = m_CO3
-        else:
-            x_lo = m_CO3
-
-    m_HCO3 = np.sqrt((K2*m_CO2*m_CO3)/K3)
-    m_H = 0.0
-    if m_CO3 > 0.0:
-        m_H = (K3*m_HCO3)/m_CO3
-
-    # Report the resulting saturation state (<=1 when carbon is scarce)
-    Kspcal = Kspcal_eq_constant(T_ocean)
-    Omega_cal = 0.0
-    if Kspcal > 0.0:
-        Omega_cal = (m_CO3*m_Ca)/Kspcal
-
-    return m_CO2, m_HCO3, m_CO3, m_H, Omega_cal
-
-@nb.njit()
-def compute_N_CO2(m_CO2, m_HCO3, m_CO3, N_H2O):
-    mu_H2O = 1.00797*2 + 15.9994 # g/mol
-    N_CO2 = (m_CO2 + m_HCO3 + m_CO3)*N_H2O*(mu_H2O/1e3)
-    return N_CO2
-
-@nb.njit()
-def aqueous_carbon_chemistry(T, P_CO2, m_Ca, N_H2O, N_CO2):
-    """
-    Wrapper for carbonate chemistry: try saturation, fall back to mass balance if carbon is insufficient.
-
-    Parameters
-    ----------
-    T : float
-        Temperature [K].
-    P_CO2 : float
-        Atmospheric CO2 partial pressure [bar].
-    m_Ca : float
-        Ocean Ca2+ concentration [mol/kg].
-    N_H2O : float
-        Column of H2O [mol/cm^2].
-    N_CO2 : float
-        Total column of CO2 [mol/cm^2] (atmosphere + ocean).
-
-    Returns
-    -------
-    m_CO2, m_HCO3, m_CO3, m_H : float
-        Species concentrations [mol/kg].
-    Omega_cal : float
-        Calcite saturation state (1.0 if saturation solution is accepted, <1 if mass balance enforced).
-    """
-
-    rel_tol = 0
-    abs_tol = 1e-30
-    # Require a small cushion above the inventory before declaring saturation feasible
-    N_CO2_thresh = N_CO2 #+ max(rel_tol * N_CO2, abs_tol)
-
-    m_CO2, m_HCO3, m_CO3, m_H = aqueous_carbon_chemistry_saturation(T, P_CO2, m_Ca)
-
-    # Check to see if solution can satisfy mass balance
-    N_CO2_1 = compute_N_CO2(m_CO2, m_HCO3, m_CO3, N_H2O)
-    if N_CO2_1 < N_CO2_thresh:
-        return m_CO2, m_HCO3, m_CO3, m_H, 1.0
-    
-    # If we are here, then mass balance could not be satisfied
-    return aqueous_carbon_chemistry_mass_balance(T, P_CO2, m_Ca, N_H2O, N_CO2)
-
-@nb.cfunc(nb.void(nb.double,nb.int32,nb.types.CPointer(nb.double),nb.types.CPointer(nb.double), nb.types.CPointer(nb.double)))
-def water_ocean_solubility_fcn(T_surf, ng, P_i, m_i, p):
-    # P_i in bar
-    # m_i in mol/kg
-
-    ind_CO2 = int(p[0])
-    m_Ca = p[1]
-    N_H2O = p[2]
-    N_CO2 = p[3]
-    
-    # zero-out everything
-    for i in range(ng):
-        m_i[i] = 0.0
-
-    # CO2
-    P_CO2 = P_i[ind_CO2]
-    m_CO2, m_HCO3, m_CO3, m_H, Omega_cal = aqueous_carbon_chemistry(T_surf, P_CO2, m_Ca, N_H2O, N_CO2)
-    m_i[ind_CO2] = m_CO2 + m_HCO3 + m_CO3 # total dissolved carbon
+    return wv_planet, F_planet
 
 class AdiabatClimateVPL(AdiabatClimate):
 
     def __init__(self, M_planet=1.0, R_planet=1.0, stellar_flux=1370, Teff=5780.0, nz=50, number_of_zeniths=4,
-                 species_file=None, star_file=None, m_Ca=2.45e-03, ocean_chemistry=True, 
+                 species_file=None, star_file=None, 
                  data_dir=None, double_radiative_grid=False):
         """Initializes the code. 
 
@@ -312,12 +108,6 @@ class AdiabatClimateVPL(AdiabatClimate):
         # Change default parameters
         self.max_rc_iters = 30 # Lots of iterations
         self.P_top = 10.0 # 10 dynes/cm^2 top, or 1e-5 bars.
-        self.tol_make_column = 1e-5 # Loosen tolerance to avoid errors
-
-        # Deal with ocean solubility
-        self.m_Ca = m_Ca
-        if ocean_chemistry:
-            self.set_ocean_solubility_fcn('H2O', water_ocean_solubility_fcn)
 
     def _custom_setup(self, T_surf, stellar_flux, surface_albedo, RH, bond_albedo):
         # Set surface albedo
@@ -328,27 +118,29 @@ class AdiabatClimateVPL(AdiabatClimate):
 
         # Compute tropopause temperature
         self.T_trop = skin_temperature(stellar_flux, bond_albedo)
-        self.T_trop = np.minimum(T_surf-1.0e-5,self.T_trop) # Ensure T_trop < T_surf
+        self.T_trop = np.minimum(T_surf-1.0e-5, self.T_trop) # Ensure T_trop < T_surf
 
         # Set the bolometric stellar flux
         self.rad.set_bolometric_flux(stellar_flux)
     
     def TOA_fluxes_column_custom(self, T_surf, N_i, stellar_flux, surface_albedo, RH, bond_albedo=0.3):
         """
-        Compute top-of-atmosphere fluxes using total column inventories (atmosphere + ocean).
+        Compute top-of-atmosphere fluxes using column inventories (mol/cm^2). Volatiles are allowed to
+        go into the atmosphere or condense onto the surface (i.e. a H2O ocean). Volatiles do not
+        dissolve into a surface ocean.
 
         Parameters
         ----------
         T_surf : float
             Surface temperature [K].
         N_i : ndarray
-            Total column abundances for each species [mol/cm^2], including atmospheric and ocean reservoirs.
+            Column abundances for each species [mol/cm^2]
         stellar_flux : float
             Bolometric stellar flux at the planet [W/m^2].
         surface_albedo : float
             Surface albedo [unitless].
         RH : float
-            Relative humidity [0–1] used to set the atmospheric profile.
+            Relative humidity [0-1] used to set the atmospheric profile.
         bond_albedo : float, optional
             Bond albedo for the tropopause temperature estimate, by default 0.3.
 
@@ -363,12 +155,6 @@ class AdiabatClimateVPL(AdiabatClimate):
         # Setup
         self._custom_setup(T_surf, stellar_flux, surface_albedo, RH, bond_albedo)
 
-        # Pass in some important inputs
-        indCO2 = self.species_names.index('CO2')
-        indH2O = self.species_names.index('H2O')
-        self.ocean_args = np.array([indCO2+ 1e-8, self.m_Ca, N_i[indH2O], N_i[indCO2]])
-        self.ocean_args_p = self.ocean_args.ctypes.data
-
         # Compute radiative transfer
         ASR, OLR = self.TOA_fluxes_column(T_surf, N_i)
 
@@ -377,21 +163,86 @@ class AdiabatClimateVPL(AdiabatClimate):
         ASR /= 1e3
 
         return ASR, OLR
+    
+    def surface_temperature_column_custom(self, N_i, stellar_flux, surface_albedo, RH, bond_albedo=0.3,
+                                          T_bounds=(200.0, 400.0), T_surf_guess=None, n_intervals=20):
+        """
+        Find the stable surface temperature closest to a target guess.
 
-def skin_temperature(stellar_flux, bond_albedo):
-    return stars.equilibrium_temperature(stellar_flux, bond_albedo)*(1/2)**(1/4)
+        Parameters
+        ----------
+        N_i : ndarray
+            Column abundances for each species [mol/cm^2].
+        stellar_flux : float
+            Bolometric stellar flux at the planet [W/m^2].
+        surface_albedo : float
+            Surface albedo [unitless].
+        RH : float
+            Relative humidity [0-1] used to set the atmospheric profile.
+        bond_albedo : float, optional
+            Bond albedo for the tropopause temperature estimate, by default 0.3.
+        T_bounds : tuple, optional
+            Temperature bracket to search over (K), by default (200.0, 400.0).
+        T_surf_guess : float, optional
+            Preferred equilibrium temperature. The stable root closest to this
+            value is returned.
+        n_intervals : int, optional
+            Number of intervals used when scanning for sign changes, by default 20.
 
-def blackbody_spectrum_at_planet(stellar_flux, Teff, nw):
+        Returns
+        -------
+        float
+            Stable surface temperature (K) closest to `T_surf_guess`.
+        """
 
-    # Blackbody
-    wv_planet = np.logspace(np.log10(0.1), np.log10(100), nw)*1e3 # nm
-    F_planet = stars.blackbody(Teff, wv_planet)*np.pi
+        def net_flux(T_surf):
+            ASR, OLR = self.TOA_fluxes_column_custom(T_surf, N_i, stellar_flux, surface_albedo, RH, bond_albedo)
+            return ASR - OLR
 
-    # Rescale so that it has the proper stellar flux for the planet
-    factor = stellar_flux/stars.energy_in_spectrum(wv_planet, F_planet)
-    F_planet *= factor
+        def is_stable(T_eq, eps=0.5):
+            """Stability: d(net_flux)/dT < 0 implies restoring tendency."""
+            delta_low = max(T_bounds[0], T_eq - eps)
+            delta_high = min(T_bounds[1], T_eq + eps)
+            if delta_high == delta_low:
+                return False
+            f_low = net_flux(delta_low)
+            f_high = net_flux(delta_high)
+            deriv = (f_high - f_low) / (delta_high - delta_low)
+            return deriv < 0.0
 
-    return wv_planet, F_planet
+        guess = T_surf_guess if T_surf_guess is not None else 0.5 * (T_bounds[0] + T_bounds[1])
+
+        # Scan for all sign changes to capture multiple equilibria
+        scan_T = np.linspace(T_bounds[0], T_bounds[1], int(n_intervals) + 1)
+        scan_flux = [net_flux(T) for T in scan_T]
+
+        candidate_brackets = []
+        for i in range(len(scan_T) - 1):
+            f0, f1 = scan_flux[i], scan_flux[i + 1]
+            if f0 == 0.0:
+                # Exact zero on grid; treat as tiny bracket
+                candidate_brackets.append((scan_T[i], scan_T[i]))
+            elif f0 * f1 < 0:
+                candidate_brackets.append((scan_T[i], scan_T[i + 1]))
+
+        roots = []
+        for a, b in candidate_brackets:
+            if a == b:
+                root = a
+                converged = True
+            else:
+                sol = optimize.root_scalar(net_flux, bracket=(a, b), method='brentq')
+                root = sol.root
+                converged = sol.converged
+            if converged and T_bounds[0] <= root <= T_bounds[1] and is_stable(root):
+                roots.append(root)
+
+        if not roots:
+            raise RuntimeError(f"surface_temperature did not find a stable root within {T_bounds}")
+
+        # Return the stable equilibrium closest to the requested temperature
+        return min(roots, key=lambda r: abs(r - guess))
+
 
 class ClimateModel:
 
