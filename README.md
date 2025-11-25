@@ -28,5 +28,18 @@ mkdir -p build
 cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build .
-./test_climate_c # expects ClimateGrid.h5 in the repo root
+./test_climate # expects ClimateGrid.h5 in the repo root
 ```
+
+Requires HDF5 development headers/libraries on your system. The C test prints a Modern-Earth benchmark surface temperature and the average solve time in microseconds.
+
+### 4) Compare Python column solver vs grid solver
+
+Run the standalone comparison script to sample random cases, solve with both solvers, and save a scatter+histogram plot to `surface_temperature_comparison.png`:
+
+```bash
+python test_surface_temperature_comparison.py
+```
+
+It prints the Modern-Earth benchmark (including average solve time in microseconds) and reports the plot location. The script expects `ClimateGrid.h5` in the repo root.
+
