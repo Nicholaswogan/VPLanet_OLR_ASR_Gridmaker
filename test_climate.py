@@ -154,4 +154,4 @@ def test_ClimateGrid():
 
 if __name__ == "__main__":
     test_ClimateGrid()
-    # compare_surface_temperature_models()
+    compare_surface_temperature_models()
