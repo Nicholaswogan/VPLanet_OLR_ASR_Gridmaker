@@ -3,8 +3,8 @@
 // group "gridvals" with datasets "0","1",..., and "results/<dataset>" with
 // shape (*grid_shape, n_out).
 
-#ifndef GRIDUTILS_C_H
-#define GRIDUTILS_C_H
+#ifndef GRIDUTILS_H
+#define GRIDUTILS_H
 
 #include <stddef.h>
 
@@ -44,4 +44,4 @@ void grid_interpolator_free(GridInterpolator *gi);
  */
 int grid_interpolate(const GridInterpolator *gi, const double *x, double *out);
 
-#endif // GRIDUTILS_C_H
+#endif // GRIDUTILS_H

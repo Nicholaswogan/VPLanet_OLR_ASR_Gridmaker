@@ -1,4 +1,4 @@
-#include "gridutils_c.h"
+#include "gridutils.h"
 #include <hdf5.h>
 #include <math.h>
 #include <stdio.h>
