@@ -38,7 +38,7 @@ Requires HDF5 development headers/libraries on your system. The C test prints a 
 Run the standalone comparison script to sample random cases, solve with both solvers, and save a scatter+histogram plot to `surface_temperature_comparison.png`:
 
 ```bash
-python test_surface_temperature_comparison.py
+python test_climate.py
 ```
 
 It prints the Modern-Earth benchmark (including average solve time in microseconds) and reports the plot location. The script expects `ClimateGrid.h5` in the repo root.
