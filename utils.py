@@ -108,6 +108,7 @@ class AdiabatClimateVPL(AdiabatClimate):
         # Change default parameters
         self.max_rc_iters = 30 # Lots of iterations
         self.P_top = 10.0 # 10 dynes/cm^2 top, or 1e-5 bars.
+        self.use_make_column_P_guess = False
 
     def _custom_setup(self, T_surf, stellar_flux, surface_albedo, RH, bond_albedo):
         # Set surface albedo
@@ -328,19 +329,3 @@ class ClimateModel:
             raise RuntimeError(f"surface_temperature did not find a stable root within {T_bounds}")
 
         return min(roots, key=lambda r: abs(r - guess))
-
-def test_ClimateGrid():
-    c = ClimateModel('ClimateGrid.h5')
-    N_CO2 = 23*400e-6
-    stellar_flux = 1370
-    surface_albedo = 0.2
-
-    T_surf = c.surface_temperature(
-        N_CO2=N_CO2,
-        stellar_flux=stellar_flux,
-        surface_albedo=surface_albedo
-    )
-    print(T_surf)
-
-if __name__ == '__main__':
-    test_ClimateGrid()
