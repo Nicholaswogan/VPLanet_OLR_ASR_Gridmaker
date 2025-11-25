@@ -46,8 +46,6 @@ class AdiabatClimateVPL(AdiabatClimate):
             Number of zenith angles in the radiative transfer calculation, by default 1
         species_file : str, optional
             Path to a settings file. If None, then a default file is used.
-        m_Ca : float, optional
-            Ocean Ca2+ concentration in mol/kg
         data_dir : str, optional
             Path to where climate model data is stored. If None, then installed data is used.
         double_radiative_grid : bool, optional
