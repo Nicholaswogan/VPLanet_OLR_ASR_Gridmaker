@@ -250,19 +250,19 @@ class ClimateModel:
         self.g = gridutils.GridInterpolator(filename)
         self.rad_interp = self.g.make_interpolator('ASR_OLR')
 
-    def TOA_fluxes(self, T_surf, N_H2O, N_CO2, stellar_flux, surface_albedo):
-        x = np.array([T_surf, np.log10(N_H2O), np.log10(N_CO2), stellar_flux, surface_albedo])
+    def TOA_fluxes(self, T_surf, N_CO2, stellar_flux, surface_albedo):
+        x = np.array([T_surf, np.log10(N_CO2), stellar_flux, surface_albedo])
         ASR, OLR = self.rad_interp(x)
         return ASR, OLR
     
-    def surface_temperature(self, N_H2O, N_CO2, stellar_flux, surface_albedo, T_bounds=(200.0, 400.0)):
+    def surface_temperature(self, N_CO2, stellar_flux, surface_albedo,
+                           T_bounds=(200.0, 400.0), T_surf_guess=None, n_intervals=20):
         """
-        Solve for surface temperature where TOA absorbed solar equals outgoing longwave.
+        Solve for surface temperature where TOA absorbed solar equals outgoing longwave,
+        returning the stable equilibrium closest to a target guess.
 
         Parameters
         ----------
-        N_H2O : float
-            Total H2O column (mol/cm^2).
         N_CO2 : float
             Total CO2 column (mol/cm^2).
         stellar_flux : float
@@ -270,23 +270,64 @@ class ClimateModel:
         surface_albedo : float
             Surface albedo.
         T_bounds : tuple, optional
-            Bracket for the root solver (K), by default (150, 450).
+            Temperature bracket to search over (K), by default (200.0, 400.0).
+        T_surf_guess : float, optional
+            Preferred equilibrium temperature. The stable root closest to this
+            value is returned.
+        n_intervals : int, optional
+            Number of intervals used when scanning for sign changes, by default 20.
 
         Returns
         -------
         float
-            Surface temperature (K) that balances ASR and OLR.
+            Stable surface temperature (K) closest to `T_surf_guess`.
         """
 
         def net_flux(T_surf):
-            ASR, OLR = self.TOA_fluxes(T_surf, N_H2O, N_CO2, stellar_flux, surface_albedo)
+            ASR, OLR = self.TOA_fluxes(T_surf, N_CO2, stellar_flux, surface_albedo)
             return ASR - OLR
 
-        sol = optimize.root_scalar(net_flux, bracket=T_bounds, method='brentq')
-        if not sol.converged:
-            raise RuntimeError(f"surface_temperature did not converge for bracket {T_bounds}")
-        return sol.root
+        def is_stable(T_eq, eps=0.5):
+            """Stability: d(net_flux)/dT < 0 implies restoring tendency."""
+            delta_low = max(T_bounds[0], T_eq - eps)
+            delta_high = min(T_bounds[1], T_eq + eps)
+            if delta_high == delta_low:
+                return False
+            f_low = net_flux(delta_low)
+            f_high = net_flux(delta_high)
+            deriv = (f_high - f_low) / (delta_high - delta_low)
+            return deriv < 0.0
 
+        guess = T_surf_guess if T_surf_guess is not None else 0.5 * (T_bounds[0] + T_bounds[1])
+
+        # Scan for all sign changes to capture multiple equilibria
+        scan_T = np.linspace(T_bounds[0], T_bounds[1], int(n_intervals) + 1)
+        scan_flux = [net_flux(T) for T in scan_T]
+
+        candidate_brackets = []
+        for i in range(len(scan_T) - 1):
+            f0, f1 = scan_flux[i], scan_flux[i + 1]
+            if f0 == 0.0:
+                candidate_brackets.append((scan_T[i], scan_T[i]))
+            elif f0 * f1 < 0:
+                candidate_brackets.append((scan_T[i], scan_T[i + 1]))
+
+        roots = []
+        for a, b in candidate_brackets:
+            if a == b:
+                root = a
+                converged = True
+            else:
+                sol = optimize.root_scalar(net_flux, bracket=(a, b), method='brentq')
+                root = sol.root
+                converged = sol.converged
+            if converged and T_bounds[0] <= root <= T_bounds[1] and is_stable(root):
+                roots.append(root)
+
+        if not roots:
+            raise RuntimeError(f"surface_temperature did not find a stable root within {T_bounds}")
+
+        return min(roots, key=lambda r: abs(r - guess))
 
 def main():
     c = ClimateModel('ClimateGrid.h5')
