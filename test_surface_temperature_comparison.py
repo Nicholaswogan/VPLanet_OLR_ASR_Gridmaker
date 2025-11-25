@@ -124,18 +124,34 @@ def compare_surface_temperature_models(
     return output_path
 
 def test_ClimateGrid():
+    "Modern Earth-like test case"
     c = ClimateModel('ClimateGrid.h5')
     N_CO2 = 23*400e-6
     stellar_flux = 1370
     surface_albedo = 0.2
 
-    T_surf = c.surface_temperature(
-        N_CO2=N_CO2,
-        stellar_flux=stellar_flux,
-        surface_albedo=surface_albedo
+    # Benchmark average compute time over multiple runs
+    import time
+    n_runs = 100
+    start = time.perf_counter()
+    for _ in range(n_runs):
+        T_surf = c.surface_temperature(
+            N_CO2=N_CO2,
+            stellar_flux=stellar_flux,
+            surface_albedo=surface_albedo
+        )
+    elapsed = time.perf_counter() - start
+    avg_us = (elapsed / n_runs) * 1e6
+
+    print(
+        "Modern-Earth benchmark:"
+        f" N_CO2={N_CO2:.4e} mol/cm^2,"
+        f" stellar_flux={stellar_flux} W/m^2,"
+        f" surface_albedo={surface_albedo},"
+        f" T_surf={T_surf:.3f} K,"
+        f" avg_time={avg_us:.3f} µs over {n_runs} runs"
     )
-    print(T_surf)
 
 if __name__ == "__main__":
     test_ClimateGrid()
-    compare_surface_temperature_models()
+    # compare_surface_temperature_models()

@@ -20,6 +20,16 @@ target_include_directories(climate
 target_link_libraries(climate
     PUBLIC
         HDF5::HDF5
+        m
 )
 
 target_compile_definitions(climate PRIVATE $<$<BOOL:${MSVC}>:_CRT_SECURE_NO_WARNINGS>)
+
+add_executable(test_climate
+    test_climate.c
+)
+
+target_link_libraries(test_climate
+    PRIVATE
+        climate
+)
