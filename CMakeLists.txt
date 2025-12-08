@@ -8,7 +8,6 @@ find_package(HDF5 REQUIRED COMPONENTS C)
 
 add_library(climate STATIC
     climate.c
-    gridutils.c
 )
 
 target_include_directories(climate
