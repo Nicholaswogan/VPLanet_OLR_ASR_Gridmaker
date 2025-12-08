@@ -1,5 +1,6 @@
 #include "climate.h"
 
+#include <float.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -35,31 +36,69 @@ static int is_stable(const NetFluxCtx *ctx, double T_eq, const double T_bounds[2
     return deriv < 0.0;
 }
 
-// Simple bisection solver on a sign-changing bracket.
-static int bisection_solve(const NetFluxCtx *ctx, double a, double b, double fa, double fb,
-                           double tol, size_t max_iter, double *root_out) {
+// Brent-Dekker (brentq) root finder on a sign-changing bracket.
+static int brentq_solve(const NetFluxCtx *ctx, double a, double b, double fa, double fb,
+                        double tol, size_t max_iter, double *root_out) {
     if (fa * fb > 0.0) return -1;
-    double left = a;
-    double right = b;
-    double f_left = fa;
-    double f_right = fb;
+    double c = a, fc = fa;
+    double d = b - a, e = d;
     for (size_t iter = 0; iter < max_iter; ++iter) {
-        double mid = 0.5 * (left + right);
-        double f_mid = 0.0;
-        if (net_flux(ctx, mid, &f_mid) != 0) return -1;
-        if (fabs(f_mid) < tol || fabs(right - left) < tol) {
-            *root_out = mid;
+        if (fb * fc > 0.0) {
+            c = a;
+            fc = fa;
+            d = e = b - a;
+        }
+        if (fabs(fc) < fabs(fb)) {
+            a = b; b = c; c = a;
+            fa = fb; fb = fc; fc = fa;
+        }
+
+        double tol1 = 2.0 * DBL_EPSILON * fabs(b) + 0.5 * tol;
+        double xm = 0.5 * (c - b);
+        if (fabs(xm) <= tol1 || fb == 0.0) {
+            *root_out = b;
             return 0;
         }
-        if (f_left * f_mid <= 0.0) {
-            right = mid;
-            f_right = f_mid;
+
+        if (fabs(e) >= tol1 && fabs(fa) > fabs(fb)) {
+            double s = fb / fa;
+            double p, q;
+            if (a == c) {
+                // Secant method
+                p = 2.0 * xm * s;
+                q = 1.0 - s;
+            } else {
+                // Inverse quadratic interpolation
+                double q1 = fa / fc;
+                double r = fb / fc;
+                p = s * (2.0 * xm * q1 * (q1 - r) - (b - a) * (r - 1.0));
+                q = (q1 - 1.0) * (r - 1.0) * (s - 1.0);
+            }
+            if (p > 0.0) q = -q;
+            p = fabs(p);
+
+            if (2.0 * p < fmin(3.0 * xm * q - fabs(tol1 * q), fabs(e * q))) {
+                e = d;
+                d = p / q;
+            } else {
+                d = xm;
+                e = d;
+            }
         } else {
-            left = mid;
-            f_left = f_mid;
+            d = xm;
+            e = d;
         }
+
+        a = b;
+        fa = fb;
+        if (fabs(d) > tol1) {
+            b += d;
+        } else {
+            b += (xm > 0.0 ? tol1 : -tol1);
+        }
+        if (net_flux(ctx, b, &fb) != 0) return -1;
     }
-    *root_out = 0.5 * (left + right);
+    *root_out = b;
     return 0;
 }
 
@@ -151,7 +190,7 @@ int climate_model_surface_temperature(const ClimateModel *cm,
             } else if (curr_f == 0.0) {
                 root_val = curr_T;
             } else {
-                if (bisection_solve(&ctx, prev_T, curr_T, prev_f, curr_f, tol, 100, &root_val) != 0) {
+                if (brentq_solve(&ctx, prev_T, curr_T, prev_f, curr_f, tol, 100, &root_val) != 0) {
                     free(roots);
                     return -1;
                 }
