@@ -32,3 +32,12 @@ target_link_libraries(test_climate
     PRIVATE
         climate
 )
+
+add_executable(vpl_example
+    vpl_example.c
+)
+
+target_link_libraries(vpl_example
+    PRIVATE
+        climate
+)
