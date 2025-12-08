@@ -7,14 +7,14 @@
 
 typedef struct {
     const ClimateModel *cm;
-    double N_CO2;
+    double P_CO2;
     double stellar_flux;
     double surface_albedo;
 } NetFluxCtx;
 
 static int net_flux(const NetFluxCtx *ctx, double T_surf, double *out_flux) {
     double ASR = 0.0, OLR = 0.0;
-    if (climate_model_toa_fluxes(ctx->cm, T_surf, ctx->N_CO2, ctx->stellar_flux,
+    if (climate_model_toa_fluxes(ctx->cm, T_surf, ctx->P_CO2, ctx->stellar_flux,
                                  ctx->surface_albedo, &ASR, &OLR) != 0) {
         return -1;
     }
@@ -83,15 +83,16 @@ void climate_model_free(ClimateModel *cm) {
 
 int climate_model_toa_fluxes(const ClimateModel *cm,
                              double T_surf,
-                             double N_CO2,
+                             double P_CO2,
                              double stellar_flux,
                              double surface_albedo,
                              double *ASR,
                              double *OLR) {
     if (!cm || !cm->rad_interp || !ASR || !OLR) return -1;
+    if (!isfinite(P_CO2) || P_CO2 <= 0.0) return -1;
     double x[4];
     x[0] = T_surf;
-    x[1] = log10(N_CO2);
+    x[1] = log10(P_CO2);
     x[2] = stellar_flux;
     x[3] = surface_albedo;
 
@@ -103,7 +104,7 @@ int climate_model_toa_fluxes(const ClimateModel *cm,
 }
 
 int climate_model_surface_temperature(const ClimateModel *cm,
-                                      double N_CO2,
+                                      double P_CO2,
                                       double stellar_flux,
                                       double surface_albedo,
                                       const double T_bounds[2],
@@ -115,7 +116,7 @@ int climate_model_surface_temperature(const ClimateModel *cm,
     double t_min = T_bounds[0];
     double t_max = T_bounds[1];
     if (t_max <= t_min) return -1;
-    NetFluxCtx ctx = {cm, N_CO2, stellar_flux, surface_albedo};
+    NetFluxCtx ctx = {cm, P_CO2, stellar_flux, surface_albedo};
 
     double guess = T_surf_guess;
     if (!isfinite(guess)) guess = 0.5 * (t_min + t_max);

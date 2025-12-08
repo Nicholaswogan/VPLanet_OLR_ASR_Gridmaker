@@ -31,7 +31,7 @@ void climate_model_free(ClimateModel *cm);
  *
  * Inputs mirror the Python version:
  *   T_surf         Surface temperature [K]
- *   N_CO2          CO2 column [mol/cm^2]
+ *   P_CO2          CO2 partial pressure [bar]
  *   stellar_flux   Bolometric stellar flux at planet [W/m^2]
  *   surface_albedo Surface albedo [unitless]
  *
@@ -42,7 +42,7 @@ void climate_model_free(ClimateModel *cm);
  */
 int climate_model_toa_fluxes(const ClimateModel *cm,
                              double T_surf,
-                             double N_CO2,
+                             double P_CO2,
                              double stellar_flux,
                              double surface_albedo,
                              double *ASR,
@@ -63,7 +63,7 @@ int climate_model_toa_fluxes(const ClimateModel *cm,
  * Returns 0 on success, non-zero on failure (no stable root or interpolation error).
  */
 int climate_model_surface_temperature(const ClimateModel *cm,
-                                      double N_CO2,
+                                      double P_CO2,
                                       double stellar_flux,
                                       double surface_albedo,
                                       const double T_bounds[2],

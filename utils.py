@@ -122,9 +122,9 @@ class AdiabatClimateVPL(AdiabatClimate):
         # Set the bolometric stellar flux
         self.rad.set_bolometric_flux(stellar_flux)
     
-    def TOA_fluxes_column_custom(self, T_surf, N_i, stellar_flux, surface_albedo, RH, bond_albedo=0.3):
+    def TOA_fluxes_custom(self, T_surf, P_i, stellar_flux, surface_albedo, RH, bond_albedo=0.3):
         """
-        Compute top-of-atmosphere fluxes using column inventories (mol/cm^2). Volatiles are allowed to
+        Compute top-of-atmosphere fluxes using pressures (dynes/cm^2). Volatiles are allowed to
         go into the atmosphere or condense onto the surface (i.e. a H2O ocean). Volatiles do not
         dissolve into a surface ocean.
 
@@ -132,8 +132,8 @@ class AdiabatClimateVPL(AdiabatClimate):
         ----------
         T_surf : float
             Surface temperature [K].
-        N_i : ndarray
-            Column abundances for each species [mol/cm^2]
+        P_i : ndarray
+            Pressures for each species [dynes/cm^2]
         stellar_flux : float
             Bolometric stellar flux at the planet [W/m^2].
         surface_albedo : float
@@ -155,7 +155,7 @@ class AdiabatClimateVPL(AdiabatClimate):
         self._custom_setup(T_surf, stellar_flux, surface_albedo, RH, bond_albedo)
 
         # Compute radiative transfer
-        ASR, OLR = self.TOA_fluxes_column(T_surf, N_i)
+        ASR, OLR = self.TOA_fluxes(T_surf, P_i)
 
         # Convert to W/m^2
         OLR /= 1e3
@@ -163,15 +163,15 @@ class AdiabatClimateVPL(AdiabatClimate):
 
         return ASR, OLR
     
-    def surface_temperature_column_custom(self, N_i, stellar_flux, surface_albedo, RH, bond_albedo=0.3,
-                                          T_bounds=(200.0, 400.0), T_surf_guess=None, n_intervals=20):
+    def surface_temperature_custom(self, P_i, stellar_flux, surface_albedo, RH, bond_albedo=0.3,
+                                   T_bounds=(100.0, 600.0), T_surf_guess=None, n_intervals=20):
         """
-        Find the stable surface temperature closest to a target guess.
+        Find the stable surface temperature closest to a target guess, using species pressures.
 
         Parameters
         ----------
-        N_i : ndarray
-            Column abundances for each species [mol/cm^2].
+        P_i : ndarray
+            Pressures for each species [dynes/cm^2].
         stellar_flux : float
             Bolometric stellar flux at the planet [W/m^2].
         surface_albedo : float
@@ -181,7 +181,7 @@ class AdiabatClimateVPL(AdiabatClimate):
         bond_albedo : float, optional
             Bond albedo for the tropopause temperature estimate, by default 0.3.
         T_bounds : tuple, optional
-            Temperature bracket to search over (K), by default (200.0, 400.0).
+            Temperature bracket to search over (K).
         T_surf_guess : float, optional
             Preferred equilibrium temperature. The stable root closest to this
             value is returned.
@@ -195,7 +195,7 @@ class AdiabatClimateVPL(AdiabatClimate):
         """
 
         def net_flux(T_surf):
-            ASR, OLR = self.TOA_fluxes_column_custom(T_surf, N_i, stellar_flux, surface_albedo, RH, bond_albedo)
+            ASR, OLR = self.TOA_fluxes_custom(T_surf, P_i, stellar_flux, surface_albedo, RH, bond_albedo)
             return ASR - OLR
 
         def is_stable(T_eq, eps=0.5):
@@ -249,27 +249,27 @@ class ClimateModel:
         self.g = gridutils.GridInterpolator(filename)
         self.rad_interp = self.g.make_interpolator('ASR_OLR')
 
-    def TOA_fluxes(self, T_surf, N_CO2, stellar_flux, surface_albedo):
-        x = np.array([T_surf, np.log10(N_CO2), stellar_flux, surface_albedo])
+    def TOA_fluxes(self, T_surf, P_CO2, stellar_flux, surface_albedo):
+        x = np.array([T_surf, np.log10(P_CO2), stellar_flux, surface_albedo])
         ASR, OLR = self.rad_interp(x)
         return ASR, OLR
     
-    def surface_temperature(self, N_CO2, stellar_flux, surface_albedo,
-                           T_bounds=(200.0, 400.0), T_surf_guess=None, n_intervals=20):
+    def surface_temperature(self, P_CO2, stellar_flux, surface_albedo,
+                           T_bounds=(100.0, 600.0), T_surf_guess=None, n_intervals=20):
         """
         Solve for surface temperature where TOA absorbed solar equals outgoing longwave,
         returning the stable equilibrium closest to a target guess.
 
         Parameters
         ----------
-        N_CO2 : float
-            Total CO2 column (mol/cm^2).
+        P_CO2 : float
+            CO2 partial pressure (bar).
         stellar_flux : float
             Bolometric stellar flux at the planet (W/m^2).
         surface_albedo : float
             Surface albedo.
         T_bounds : tuple, optional
-            Temperature bracket to search over (K), by default (200.0, 400.0).
+            Temperature bracket to search over (K).
         T_surf_guess : float, optional
             Preferred equilibrium temperature. The stable root closest to this
             value is returned.
@@ -283,7 +283,7 @@ class ClimateModel:
         """
 
         def net_flux(T_surf):
-            ASR, OLR = self.TOA_fluxes(T_surf, N_CO2, stellar_flux, surface_albedo)
+            ASR, OLR = self.TOA_fluxes(T_surf, P_CO2, stellar_flux, surface_albedo)
             return ASR - OLR
 
         def is_stable(T_eq, eps=0.5):

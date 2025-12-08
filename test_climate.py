@@ -21,13 +21,13 @@ def compare_surface_temperature_models(
         return None
 
     gridvals, _ = get_gridvals()
-    T_grid, log10N_CO2_grid, stellar_flux_grid, surface_albedo_grid = gridvals
+    T_grid, log10P_CO2_grid, stellar_flux_grid, surface_albedo_grid = gridvals
     T_bounds = (float(T_grid.min()), float(T_grid.max()))
 
     rng = np.random.default_rng(seed)
-    log10N_CO2_samples = rng.uniform(-4.0, 1.0, n_samples)
+    log10P_CO2_samples = rng.uniform(-4.0, 1.0, n_samples)
     stellar_flux_samples = rng.uniform(800.0, 1300.0, n_samples)
-    surface_albedo_samples = rng.uniform(float(surface_albedo_grid.min()), float(surface_albedo_grid.max()), n_samples)
+    surface_albedo_samples = rng.uniform(0.0, 0.3, n_samples)
     T_guess_samples = np.full(n_samples, 300.0)
 
     adiabat = AdiabatClimateVPL()
@@ -41,17 +41,17 @@ def compare_surface_temperature_models(
     climate_t = []
     failures = 0
 
-    for logN, flux, alb, guess in zip(
-        log10N_CO2_samples, stellar_flux_samples, surface_albedo_samples, T_guess_samples
+    for logP, flux, alb, guess in zip(
+        log10P_CO2_samples, stellar_flux_samples, surface_albedo_samples, T_guess_samples
     ):
-        N_i = np.ones(len(adiabat.species_names)) * 1e-15
-        N_i[idx_h2o] = 15e3  # Assume 1 ocean of H2O
-        N_i[idx_n2] = 36.0   # ~1 bar N2
-        N_i[idx_co2] = 10.0 ** logN
+        P_i = np.ones(len(adiabat.species_names)) * 1e-15
+        P_i[idx_h2o] = 270e6  # Assume 1 ocean of H2O
+        P_i[idx_n2] = 1.0e6   # ~1 bar N2
+        P_i[idx_co2] = (10.0**logP)*1e6
 
         try:
-            t_column = adiabat.surface_temperature_column_custom(
-                N_i=N_i,
+            t_column = adiabat.surface_temperature_custom(
+                P_i=P_i,
                 stellar_flux=float(flux),
                 surface_albedo=float(alb),
                 RH=1.0,
@@ -62,16 +62,16 @@ def compare_surface_temperature_models(
         except Exception as exc:
             failures += 1
             print(
-                "Failure in surface_temperature_column_custom:"
-                f" log10N_CO2={logN:.16f}, stellar_flux={flux:.16f},"
+                "Failure in surface_temperature_custom:"
+                f" log10P_CO2={logP:.16f}, stellar_flux={flux:.16f},"
                 f" surface_albedo={alb:.16f}, T_guess={guess:.2f},"
-                f" N_i={N_i.tolist()}, err={exc}"
+                f" P_i={P_i.tolist()}, err={exc}"
             )
             continue
 
         try:
             t_grid = climate.surface_temperature(
-                N_CO2=float(N_i[idx_co2]),
+                P_CO2=float(P_i[idx_co2]/1e6),
                 stellar_flux=float(flux),
                 surface_albedo=float(alb),
                 T_bounds=T_bounds,
@@ -81,9 +81,9 @@ def compare_surface_temperature_models(
             failures += 1
             print(
                 "Failure in surface_temperature:"
-                f" log10N_CO2={logN:.16f}, stellar_flux={flux:.16f},"
+                f" log10P_CO2={logP:.16f}, stellar_flux={flux:.16f},"
                 f" surface_albedo={alb:.16f}, T_guess={guess:.2f},"
-                f" N_i={N_i.tolist()}, err={exc}"
+                f" P_i={P_i.tolist()}, err={exc}"
             )
             continue
 
@@ -126,7 +126,7 @@ def compare_surface_temperature_models(
 def test_ClimateGrid():
     "Modern Earth-like test case"
     c = ClimateModel('ClimateGrid.h5')
-    N_CO2 = 23*400e-6
+    P_CO2 = 400e-6
     stellar_flux = 1370
     surface_albedo = 0.2
 
@@ -136,7 +136,7 @@ def test_ClimateGrid():
     start = time.perf_counter()
     for _ in range(n_runs):
         T_surf = c.surface_temperature(
-            N_CO2=N_CO2,
+            P_CO2=P_CO2,
             stellar_flux=stellar_flux,
             surface_albedo=surface_albedo
         )
@@ -145,7 +145,7 @@ def test_ClimateGrid():
 
     print(
         "Modern-Earth benchmark:"
-        f" N_CO2={N_CO2:.4e} mol/cm^2,"
+        f" P_CO2={P_CO2:.4e} bar,"
         f" stellar_flux={stellar_flux} W/m^2,"
         f" surface_albedo={surface_albedo},"
         f" T_surf={T_surf:.3f} K,"

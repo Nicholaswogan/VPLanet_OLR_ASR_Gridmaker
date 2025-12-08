@@ -11,10 +11,10 @@ int main(void) {
         return 1;
     }
 
-    double N_CO2 = 23.0 * 400e-6;  // mol/cm^2
+    double P_CO2 = 400e-6;         // bar (Modern Earth ~400 ppmv)
     double stellar_flux = 1370.0;  // W/m^2
     double surface_albedo = 0.2;
-    double T_bounds[2] = {200.0, 400.0};
+    double T_bounds[2] = {100.0, 600.0};
     double T_surf = 0.0;
 
     // Benchmark: run multiple times to estimate average compute time.
@@ -25,7 +25,7 @@ int main(void) {
     for (int i = 0; i < n_runs; ++i) {
         rc = climate_model_surface_temperature(
             cm,
-            N_CO2,
+            P_CO2,
             stellar_flux,
             surface_albedo,
             T_bounds,
@@ -48,9 +48,9 @@ int main(void) {
     double avg_us = (elapsed_sec / n_runs) * 1e6;
 
     printf(
-        "C Modern-Earth benchmark: N_CO2=%.4e mol/cm^2, stellar_flux=%.1f W/m^2, "
+        "C Modern-Earth benchmark: P_CO2=%.4e bar, stellar_flux=%.1f W/m^2, "
         "surface_albedo=%.3f, T_surf=%.3f K, avg_time=%.3f µs over %d runs\n",
-        N_CO2, stellar_flux, surface_albedo, T_surf, avg_us, n_runs
+        P_CO2, stellar_flux, surface_albedo, T_surf, avg_us, n_runs
     );
 
     climate_model_free(cm);
