@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <time.h>
 #include "climate.h"
 
 typedef struct {
@@ -84,13 +85,24 @@ int main(void) {
         return 1;
     }
 
-    ClimateResult res = vplanet_climate(
-        cm,
-        40.0,     // pco2_pa
-        1370.0,   // stellar_flux
-        0.2,      // surface_albedo
-        300.0     // T_surf_guess
-    );
+    const int n_runs = 1000;
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+
+    ClimateResult res = {0};
+    for (int i = 0; i < n_runs; ++i) {
+        res = vplanet_climate(
+            cm,
+            40.0,     // pco2_pa
+            1370.0,   // stellar_flux
+            0.2,      // surface_albedo
+            300.0     // T_surf_guess
+        );
+        if (res.success != 0) {
+            break;
+        }
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t1);
 
     if (res.success != 0) {
         fprintf(stderr, "vplanet_climate failed (rc=%d)\n", res.success);
@@ -98,8 +110,12 @@ int main(void) {
         return 1;
     }
 
+    double elapsed_sec = (t1.tv_sec - t0.tv_sec) + 1e-9 * (t1.tv_nsec - t0.tv_nsec);
+    double avg_us = (elapsed_sec / n_runs) * 1e6;
+
     printf("T_surf=%.3f K, P_surf=%.6e dyne/cm^2, f_H2O=%.6e, f_N2=%.6e, f_CO2=%.6e\n",
            res.T_surf, res.P_surf, res.f_H2O_surf, res.f_N2_surf, res.f_CO2_surf);
+    printf("Average runtime over %d runs: %.3f µs\n", n_runs, avg_us);
 
     climate_model_free(cm);
     return 0;
