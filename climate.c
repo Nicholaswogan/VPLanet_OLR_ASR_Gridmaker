@@ -371,8 +371,13 @@ ClimateModel *climate_model_load(const char *filename) {
     if (!cm) return NULL;
 
     cm->rad_interp = grid_interpolator_load(filename, "ASR_OLR");
-    if (!cm->rad_interp) {
-        free(cm);
+    cm->p_surf_interp = grid_interpolator_load(filename, "P_surf");
+    cm->f_h2o_interp = grid_interpolator_load(filename, "f_surf_H2O");
+    cm->f_n2_interp = grid_interpolator_load(filename, "f_surf_N2");
+    cm->f_co2_interp = grid_interpolator_load(filename, "f_surf_CO2");
+    if (!cm->rad_interp || !cm->p_surf_interp || !cm->f_h2o_interp ||
+        !cm->f_n2_interp || !cm->f_co2_interp) {
+        climate_model_free(cm);
         return NULL;
     }
     return cm;
@@ -380,6 +385,10 @@ ClimateModel *climate_model_load(const char *filename) {
 
 void climate_model_free(ClimateModel *cm) {
     if (!cm) return;
+    grid_interpolator_free(cm->p_surf_interp);
+    grid_interpolator_free(cm->f_h2o_interp);
+    grid_interpolator_free(cm->f_n2_interp);
+    grid_interpolator_free(cm->f_co2_interp);
     grid_interpolator_free(cm->rad_interp);
     free(cm);
 }
@@ -403,6 +412,46 @@ int climate_model_toa_fluxes(const ClimateModel *cm,
     if (grid_interpolate(cm->rad_interp, x, out) != 0) return -1;
     *ASR = out[0];
     *OLR = out[1];
+    return 0;
+}
+
+int climate_model_surface_state(const ClimateModel *cm,
+                                double T_surf,
+                                double P_CO2,
+                                double stellar_flux,
+                                double surface_albedo,
+                                double *P_surf,
+                                double *f_H2O,
+                                double *f_N2,
+                                double *f_CO2) {
+    if (!cm || !cm->p_surf_interp || !cm->f_h2o_interp || !cm->f_n2_interp || !cm->f_co2_interp) {
+        return -1;
+    }
+    if (!isfinite(P_CO2) || P_CO2 <= 0.0) return -1;
+
+    double x[4];
+    x[0] = T_surf;
+    x[1] = log10(P_CO2);
+    x[2] = stellar_flux;
+    x[3] = surface_albedo;
+
+    double out[1];
+    if (P_surf) {
+        if (grid_interpolate(cm->p_surf_interp, x, out) != 0) return -1;
+        *P_surf = out[0];
+    }
+    if (f_H2O) {
+        if (grid_interpolate(cm->f_h2o_interp, x, out) != 0) return -1;
+        *f_H2O = out[0];
+    }
+    if (f_N2) {
+        if (grid_interpolate(cm->f_n2_interp, x, out) != 0) return -1;
+        *f_N2 = out[0];
+    }
+    if (f_CO2) {
+        if (grid_interpolate(cm->f_co2_interp, x, out) != 0) return -1;
+        *f_CO2 = out[0];
+    }
     return 0;
 }
 

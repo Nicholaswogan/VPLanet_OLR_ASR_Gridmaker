@@ -53,6 +53,29 @@ int main(void) {
         P_CO2, stellar_flux, surface_albedo, T_surf, avg_us, n_runs
     );
 
+    double P_surf = 0.0, f_H2O = 0.0, f_N2 = 0.0, f_CO2 = 0.0;
+    rc = climate_model_surface_state(
+        cm,
+        T_surf,
+        P_CO2,
+        stellar_flux,
+        surface_albedo,
+        &P_surf,
+        &f_H2O,
+        &f_N2,
+        &f_CO2
+    );
+    if (rc != 0) {
+        fprintf(stderr, "Failed to interpolate surface state (rc=%d)\n", rc);
+        climate_model_free(cm);
+        return 1;
+    }
+
+    printf(
+        "Surface state: P_surf=%.6e dyne/cm^2, f_H2O=%.6e, f_N2=%.6e, f_CO2=%.6e\n",
+        P_surf, f_H2O, f_N2, f_CO2
+    );
+
     climate_model_free(cm);
     return 0;
 }

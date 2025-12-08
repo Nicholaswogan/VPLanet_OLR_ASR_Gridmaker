@@ -44,6 +44,10 @@ int grid_interpolate(const GridInterpolator *gi, const double *x, double *out);
 
 typedef struct {
     GridInterpolator *rad_interp;
+    GridInterpolator *p_surf_interp;
+    GridInterpolator *f_h2o_interp;
+    GridInterpolator *f_n2_interp;
+    GridInterpolator *f_co2_interp;
 } ClimateModel;
 
 /*
@@ -81,6 +85,33 @@ int climate_model_toa_fluxes(const ClimateModel *cm,
                              double surface_albedo,
                              double *ASR,
                              double *OLR);
+
+/*
+ * Interpolate surface state (pressure and mixing ratios) from the grid.
+ *
+ * Inputs mirror the Python version:
+ *   T_surf         Surface temperature [K]
+ *   P_CO2          CO2 partial pressure [bar]
+ *   stellar_flux   Bolometric stellar flux at planet [W/m^2]
+ *   surface_albedo Surface albedo [unitless]
+ *
+ * Outputs (all optional if NULL):
+ *   P_surf         Surface pressure [dyne/cm^2]
+ *   f_H2O          Surface mixing ratio of H2O
+ *   f_N2           Surface mixing ratio of N2
+ *   f_CO2          Surface mixing ratio of CO2
+ *
+ * Returns 0 on success, non-zero on failure.
+ */
+int climate_model_surface_state(const ClimateModel *cm,
+                                double T_surf,
+                                double P_CO2,
+                                double stellar_flux,
+                                double surface_albedo,
+                                double *P_surf,
+                                double *f_H2O,
+                                double *f_N2,
+                                double *f_CO2);
 
 /*
  * Solve for the stable surface temperature closest to T_surf_guess.
