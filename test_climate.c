@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdio.h>
 #include <time.h>
 
@@ -75,6 +76,101 @@ int main(void) {
         "Surface state: P_surf=%.6e dyne/cm^2, f_H2O=%.6e, f_N2=%.6e, f_CO2=%.6e\n",
         P_surf, f_H2O, f_N2, f_CO2
     );
+
+    // Cloud albedo conversion test: verify that using Pa for pH2O produces
+    // consistent temperatures with a fixed-albedo solve using the same effective albedo.
+    double ground_albedo = 0.1;
+    double opacity_scale = 3000.0;           // Pa; tune as needed (Driscoll & Bercovici ~1785 Pa)
+    double scattering_gamma = 0.998;
+    double beta_cloud = 0.000471169;
+    double albedo_cloud = 0.89;
+
+    ClimateAlbedoOptions cloud_opts = climate_albedo_options_cloud(
+        ground_albedo, opacity_scale, scattering_gamma, beta_cloud, albedo_cloud);
+
+    double T_cloud = 0.0;
+    double albedo_cloud_eff = 0.0;
+    rc = climate_model_surface_temperature_with_albedo(
+        cm,
+        P_CO2,
+        stellar_flux,
+        &cloud_opts,
+        T_bounds,
+        300.0,
+        20,
+        1e-4,
+        &T_cloud,
+        &albedo_cloud_eff);
+    if (rc != 0) {
+        fprintf(stderr, "Cloud-albedo temperature solve failed (rc=%d)\n", rc);
+        climate_model_free(cm);
+        return 1;
+    }
+
+    // Recompute pH2O at the cloud-equilibrium temperature to keep the fixed-albedo
+    // comparison consistent with the state used in the cloud run.
+    double P_surf_cloud = 0.0;
+    double f_H2O_cloud = 0.0;
+    rc = climate_model_surface_state(
+        cm,
+        T_cloud,
+        P_CO2,
+        stellar_flux,
+        albedo_cloud_eff,
+        &P_surf_cloud,
+        &f_H2O_cloud,
+        NULL,
+        NULL
+    );
+    if (rc != 0) {
+        fprintf(stderr, "Failed to interpolate surface state at cloud equilibrium (rc=%d)\n", rc);
+        climate_model_free(cm);
+        return 1;
+    }
+    double pH2O_pa_cloud = f_H2O_cloud * P_surf_cloud * 0.1;
+
+    double albedo_expected = cloud_albedo(
+        T_cloud, pH2O_pa_cloud, ground_albedo, opacity_scale, scattering_gamma, beta_cloud,
+        albedo_cloud);
+    if (fabs(albedo_expected - albedo_cloud_eff) > 1e-6) {
+        fprintf(stderr,
+                "Cloud albedo output mismatch: effective=%.9f, expected=%.9f\n",
+                albedo_cloud_eff, albedo_expected);
+        climate_model_free(cm);
+        return 1;
+    }
+    ClimateAlbedoOptions fixed_opts = climate_albedo_options_fixed(albedo_expected);
+
+    double T_fixed = 0.0;
+    rc = climate_model_surface_temperature_with_albedo(
+        cm,
+        P_CO2,
+        stellar_flux,
+        &fixed_opts,
+        T_bounds,
+        300.0,
+        20,
+        1e-4,
+        &T_fixed,
+        NULL);
+    if (rc != 0) {
+        fprintf(stderr, "Fixed-albedo temperature solve failed (rc=%d)\n", rc);
+        climate_model_free(cm);
+        return 1;
+    }
+
+    double delta_T = fabs(T_cloud - T_fixed);
+    if (delta_T > 1.0) {
+        fprintf(stderr,
+                "Cloud albedo conversion test failed: T_cloud=%.3f K, T_fixed=%.3f K, |delta|=%.3f K\n",
+                T_cloud, T_fixed, delta_T);
+        climate_model_free(cm);
+        return 1;
+    }
+    printf("Cloud albedo conversion test passed: T_cloud=%.3f K, T_fixed=%.3f K, |delta|=%.3f K\n",
+           T_cloud, T_fixed, delta_T);
+    printf("Cloud albedos: effective=%.6f, expected=%.6f\n",
+           albedo_cloud_eff, albedo_expected);
 
     climate_model_free(cm);
     return 0;

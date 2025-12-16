@@ -274,13 +274,50 @@ typedef struct {
     const ClimateModel *cm;
     double P_CO2;
     double stellar_flux;
-    double surface_albedo;
+    ClimateAlbedoOptions albedo_opts;
 } NetFluxCtx;
+
+static int effective_albedo(const NetFluxCtx *ctx, double T_surf, double *albedo_out) {
+    if (!ctx || !albedo_out) return -1;
+    const ClimateAlbedoOptions *opts = &ctx->albedo_opts;
+    if (opts->mode == CLIMATE_ALBEDO_CLOUD && opts->opacity_press_h2o_cloud <= 0.0) {
+        return -1;
+    }
+    if (opts->mode != CLIMATE_ALBEDO_CLOUD) {
+        *albedo_out = opts->ground_albedo;
+        return 0;
+    }
+
+    double P_surf = 0.0;
+    double f_H2O = 0.0;
+    if (climate_model_surface_state(ctx->cm, T_surf, ctx->P_CO2, ctx->stellar_flux,
+                                    opts->ground_albedo, &P_surf, &f_H2O, NULL, NULL) != 0) {
+        return -1;
+    }
+
+    double pH2O = 0.0;
+    if (P_surf > 0.0 && f_H2O > 0.0) {
+        pH2O = f_H2O * P_surf * 0.1;  // convert dyn/cm^2 to Pa
+    }
+
+    *albedo_out = cloud_albedo(T_surf,
+                               pH2O,
+                               opts->ground_albedo,
+                               opts->opacity_press_h2o_cloud,
+                               opts->scattering_gamma,
+                               opts->beta_cloud,
+                               opts->albedo_cloud);
+    return 0;
+}
 
 static int net_flux(const NetFluxCtx *ctx, double T_surf, double *out_flux) {
     double ASR = 0.0, OLR = 0.0;
+    double albedo_eff = 0.0;
+    if (effective_albedo(ctx, T_surf, &albedo_eff) != 0) {
+        return -1;
+    }
     if (climate_model_toa_fluxes(ctx->cm, T_surf, ctx->P_CO2, ctx->stellar_flux,
-                                 ctx->surface_albedo, &ASR, &OLR) != 0) {
+                                 albedo_eff, &ASR, &OLR) != 0) {
         return -1;
     }
     *out_flux = ASR - OLR;
@@ -455,20 +492,23 @@ int climate_model_surface_state(const ClimateModel *cm,
     return 0;
 }
 
-int climate_model_surface_temperature(const ClimateModel *cm,
-                                      double P_CO2,
-                                      double stellar_flux,
-                                      double surface_albedo,
-                                      const double T_bounds[2],
-                                      double T_surf_guess,
-                                      size_t n_intervals,
-                                      double tol,
-                                      double *T_out) {
+int climate_model_surface_temperature_with_albedo(const ClimateModel *cm,
+                                                  double P_CO2,
+                                                  double stellar_flux,
+                                                  const ClimateAlbedoOptions *albedo_opts_in,
+                                                  const double T_bounds[2],
+                                                  double T_surf_guess,
+                                                  size_t n_intervals,
+                                                  double tol,
+                                                  double *T_out,
+                                                  double *albedo_out) {
     if (!cm || !T_bounds || !T_out || n_intervals < 1) return -1;
+    ClimateAlbedoOptions albedo_opts =
+        albedo_opts_in ? *albedo_opts_in : climate_albedo_options_fixed(0.0);
     double t_min = T_bounds[0];
     double t_max = T_bounds[1];
     if (t_max <= t_min) return -1;
-    NetFluxCtx ctx = {cm, P_CO2, stellar_flux, surface_albedo};
+    NetFluxCtx ctx = {cm, P_CO2, stellar_flux, albedo_opts};
 
     double guess = T_surf_guess;
     if (!isfinite(guess)) guess = 0.5 * (t_min + t_max);
@@ -537,5 +577,73 @@ int climate_model_surface_temperature(const ClimateModel *cm,
 
     free(roots);
     *T_out = best_root;
+    if (albedo_out) {
+        if (effective_albedo(&ctx, best_root, albedo_out) != 0) {
+            return -1;
+        }
+    }
     return 0;
+}
+
+int climate_model_surface_temperature(const ClimateModel *cm,
+                                      double P_CO2,
+                                      double stellar_flux,
+                                      double surface_albedo,
+                                      const double T_bounds[2],
+                                      double T_surf_guess,
+                                      size_t n_intervals,
+                                      double tol,
+                                      double *T_out) {
+    ClimateAlbedoOptions albedo_opts = climate_albedo_options_fixed(surface_albedo);
+    return climate_model_surface_temperature_with_albedo(cm, P_CO2, stellar_flux, &albedo_opts,
+                                                         T_bounds, T_surf_guess, n_intervals, tol,
+                                                         T_out, NULL);
+}
+
+ClimateAlbedoOptions climate_albedo_options_fixed(double surface_albedo) {
+    ClimateAlbedoOptions opts;
+    opts.mode = CLIMATE_ALBEDO_FIXED;
+    opts.ground_albedo = surface_albedo;
+    opts.opacity_press_h2o_cloud = 1.0;
+    opts.scattering_gamma = 0.0;
+    opts.beta_cloud = 0.0;
+    opts.albedo_cloud = surface_albedo;
+    return opts;
+}
+
+ClimateAlbedoOptions climate_albedo_options_cloud(double ground_albedo,
+                                                  double opacity_press_h2o_cloud,
+                                                  double scattering_gamma,
+                                                  double beta_cloud,
+                                                  double albedo_cloud) {
+    ClimateAlbedoOptions opts;
+    opts.mode = CLIMATE_ALBEDO_CLOUD;
+    opts.ground_albedo = ground_albedo;
+    opts.opacity_press_h2o_cloud = (opacity_press_h2o_cloud > 0.0) ? opacity_press_h2o_cloud : 1.0;
+    opts.scattering_gamma = scattering_gamma;
+    opts.beta_cloud = beta_cloud;
+    opts.albedo_cloud = albedo_cloud;
+    return opts;
+}
+
+double cloud_albedo(double T_surf,
+                    double pH2O,
+                    double albedo_ground,
+                    double opacity_press_h2o_cloud,
+                    double scattering_gamma,
+                    double beta_cloud,
+                    double albedo_cloud) {
+    double opacity_cloud = pH2O / opacity_press_h2o_cloud;
+
+    double exp_term = exp(-2.0 * beta_cloud * opacity_cloud);
+
+    double cloud_refl_frac =
+        (scattering_gamma * (1.0 - exp_term)) /
+        (1.0 - (scattering_gamma * scattering_gamma * exp_term));
+
+    double albedo_total =
+        albedo_ground * (1.0 - cloud_refl_frac) +
+        albedo_cloud  * cloud_refl_frac;
+
+    return albedo_total;
 }
