@@ -12,13 +12,18 @@ typedef struct {
     double surface_albedo;
 } ClimateResult;
 
-// Compute a climate state from CO2 partial pressure and forcing, returning surface properties.
+// Compute a climate state from CO2 partial pressure, forcing, and cloud parameters,
+// returning the resulting surface properties.
 //
 // Inputs:
 //   cm             Initialized ClimateModel pointer
 //   pco2_pa        CO2 partial pressure [Pa]
 //   stellar_flux   Bolometric stellar flux at planet [W/m^2]
-//   surface_albedo Surface albedo [unitless]
+//   ground_albedo  Clear-sky / surface albedo used by the cloud model [unitless]
+//   opacity_scale  Scale for cloud opacity from H2O partial pressure [same units as pH2O]
+//   scattering_gamma Cloud single-scattering parameter [unitless]
+//   beta_cloud     Cloud extinction efficiency [unitless]
+//   albedo_cloud   Cloud albedo in the optically thick limit [unitless]
 //   T_surf_guess   Initial guess for surface temperature [K]
 //
 // Output:
