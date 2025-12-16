@@ -20,7 +20,7 @@ typedef struct {
 //   pco2_pa        CO2 partial pressure [Pa]
 //   stellar_flux   Bolometric stellar flux at planet [W/m^2]
 //   ground_albedo  Clear-sky / surface albedo used by the cloud model [unitless]
-//   opacity_scale  Scale for cloud opacity from H2O partial pressure [same units as pH2O]
+//   opacity_scale  Scale for cloud opacity from H2O partial pressure [Pa]
 //   scattering_gamma Cloud single-scattering parameter [unitless]
 //   beta_cloud     Cloud extinction efficiency [unitless]
 //   albedo_cloud   Cloud albedo in the optically thick limit [unitless]
